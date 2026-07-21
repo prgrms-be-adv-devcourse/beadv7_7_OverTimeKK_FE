@@ -32,6 +32,7 @@ interface AppContextValue {
   cancelWaitlistZone: (entryId: string, zone: Zone) => ReturnType<typeof api.cancelWaitlistZone>
   acceptWaitlistOffer: (entryId: string, method?: string) => ReturnType<typeof api.acceptWaitlistOffer>
   declineWaitlistOffer: (entryId: string) => void
+  cancelWaitlistOffer: (entryId: string) => ReturnType<typeof api.cancelWaitlistOffer>
   simulateCancellation: (sessionId: string, zone: Zone) => ReturnType<typeof api.simulateCancellation>
 
   // 판매자 액션
@@ -87,6 +88,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       declineWaitlistOffer: withRefresh((entryId: string) => {
         api.declineWaitlistOffer(entryId)
       }),
+      cancelWaitlistOffer: withRefresh((entryId: string) => api.cancelWaitlistOffer(entryId)),
       simulateCancellation: withRefresh(api.simulateCancellation.bind(api)),
       createPerformance: withRefresh(api.createPerformance.bind(api)),
       updatePerformance: withRefresh(api.updatePerformance.bind(api)),

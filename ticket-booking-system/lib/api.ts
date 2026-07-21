@@ -523,14 +523,42 @@ export const api = {
     })
     entry.status = 'PURCHASED'
     entry.position = 0
+    // 같은 구역을 기다리던 다른 대기자는 취소표가 소진되었으므로 대기 종료
     db.waitlist
       .filter((w) => w.id !== entry.id && w.sessionId === entry.sessionId && w.status === 'WAITING' && w.zones.includes(zone))
       .forEach((w) => {
         w.status = 'EXPIRED'
         w.position = 0
       })
+    // 결제 성공 → 이 구매자가 해당 공연에 점유하던 다른 대기 신청은 모두 취소
+    db.waitlist
+      .filter(
+        (w) =>
+          w.id !== entry.id &&
+          w.buyerId === entry.buyerId &&
+          w.performanceId === entry.performanceId &&
+          (w.status === 'WAITING' || w.status === 'OFFERED'),
+      )
+      .forEach((w) => {
+        w.status = 'CANCELLED'
+        w.position = 0
+      })
     recomputePositions(entry.sessionId)
     return result
+  },
+
+  // POST /api/waitlist/{id}/cancel-offer  (우선예매 결제 취소 → 대기열 취소, 취소표는 다음 대기자에게)
+  cancelWaitlistOffer(entryId: string): WaitlistEntry | null {
+    const entry = db.waitlist.find((w) => w.id === entryId)
+    if (!entry) throw new Error('대기 정보를 찾을 수 없습니다.')
+    if (entry.status !== 'OFFERED') throw new Error('예매 대기 상태가 아닙니다.')
+    const zone = entry.offeredZone!
+    entry.status = 'CANCELLED'
+    entry.position = 0
+    // 배정됐던 취소표는 다음 대기자에게 이전
+    const next = offerToNextWaiter(entry.sessionId, zone)
+    recomputePositions(entry.sessionId)
+    return next ? clone(next) : null
   },
 
   // POST /api/waitlist/{id}/decline  (또는 시간 초과 → 다음 대기자에게 이전)
