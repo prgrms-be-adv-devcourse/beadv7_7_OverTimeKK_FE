@@ -102,6 +102,8 @@ export interface Order {
   sessionId: string
   items: OrderItem[]
   totalAmount: number
+  /** 결제 시 사용한 포인트 */
+  pointsUsed?: number
   /** 취소 시 실제 환불된 금액 */
   refundedAmount?: number
   status: OrderStatus

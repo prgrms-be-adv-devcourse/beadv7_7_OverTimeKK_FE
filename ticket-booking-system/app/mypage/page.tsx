@@ -60,7 +60,7 @@ export default function MyPage() {
             <p className="text-sm font-medium text-primary">마이페이지</p>
             <h1 className="mt-1 text-2xl font-bold">포인트 · 주문 내역</h1>
           </div>
-          <div className="flex items-center gap-2 rounded-full bg-warning/10 px-3 py-2 text-warning-foreground">
+          <div className="flex items-center gap-2 rounded-full bg-warning/10 px-3 py-2 text-warning">
             <Coins className="size-4" />
             <span className="font-semibold">{formatKRW(api.getUser(userId)?.points ?? 0)}</span>
           </div>
@@ -97,7 +97,9 @@ export default function MyPage() {
                   </div>
                   <div className="mt-2 flex items-center justify-between text-sm">
                     <span>결제금액</span>
-                    <span className="font-semibold">{formatKRW(order.totalAmount)}</span>
+                    <span className="font-semibold">
+                      {formatKRW(order.totalAmount - (order.pointsUsed ?? 0))}
+                    </span>
                   </div>
                 </button>
               )
@@ -204,6 +206,9 @@ export default function MyPage() {
                   ) : (
                     <p className="mt-1">결제 정보가 없습니다.</p>
                   )}
+                  {!!selectedOrder.pointsUsed && (
+                    <p className="mt-1 text-warning">포인트 사용: -{formatKRW(selectedOrder.pointsUsed)}</p>
+                  )}
                   {selectedOrder.refundedAmount != null && (
                     <p className="mt-1 text-destructive">환불금액: {formatKRW(selectedOrder.refundedAmount)}</p>
                   )}
@@ -211,7 +216,9 @@ export default function MyPage() {
 
                 <div className="flex items-center justify-between border-t border-border pt-2 text-sm">
                   <span className="font-medium text-foreground">총 결제금액</span>
-                  <span className="font-semibold text-foreground">{formatKRW(selectedOrder.totalAmount)}</span>
+                  <span className="font-semibold text-foreground">
+                    {formatKRW(selectedOrder.totalAmount - (selectedOrder.pointsUsed ?? 0))}
+                  </span>
                 </div>
               </div>
 

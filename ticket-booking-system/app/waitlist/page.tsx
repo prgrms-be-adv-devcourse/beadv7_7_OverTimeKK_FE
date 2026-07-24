@@ -121,7 +121,7 @@ export default function WaitlistPage() {
                     <div className="flex flex-wrap items-center gap-4 text-sm text-muted-foreground">
                       <span>신청 구역: {entry.zones.join(', ')}</span>
                       {isOffered ? (
-                        <span className="font-medium text-warning-foreground">우선예매 구역: {entry.offeredZone}</span>
+                        <span className="font-medium text-warning">우선예매 구역: {entry.offeredZone}</span>
                       ) : (
                         entry.position > 0 && <span>대기순번: {entry.position}</span>
                       )}
@@ -188,7 +188,7 @@ export default function WaitlistPage() {
                         <span
                           className={cn(
                             'text-xs',
-                            isOfferedZone ? 'font-medium text-warning-foreground' : 'text-muted-foreground',
+                            isOfferedZone ? 'font-medium text-warning' : 'text-muted-foreground',
                           )}
                         >
                           {isOfferedZone

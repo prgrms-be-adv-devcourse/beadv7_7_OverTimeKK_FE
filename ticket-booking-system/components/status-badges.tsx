@@ -12,7 +12,7 @@ const perfStatusMap: Record<
   PerformanceStatus,
   { label: string; className: string }
 > = {
-  DRAFT: { label: '오픈 예정', className: 'bg-warning/20 text-warning-foreground' },
+  DRAFT: { label: '오픈 예정', className: 'bg-warning/20 text-warning' },
   ON_SALE: { label: '예매중', className: 'bg-success/15 text-success' },
   SOLD_OUT: { label: '매진 · 대기가능', className: 'bg-primary/15 text-primary' },
   ENDED: { label: '공연 종료', className: 'bg-muted text-muted-foreground' },
@@ -47,7 +47,7 @@ const orderStatusMap: Record<OrderStatus, { label: string; className: string }> 
   PAID: { label: '예매완료', className: 'bg-success/15 text-success' },
   CANCEL_REQUESTED: {
     label: '취소요청',
-    className: 'bg-warning/20 text-warning-foreground',
+    className: 'bg-warning/20 text-warning',
   },
   CANCELLED: { label: '취소완료', className: 'bg-muted text-muted-foreground' },
   REFUNDED: { label: '전액환불', className: 'bg-destructive/10 text-destructive' },
@@ -60,7 +60,7 @@ export function OrderStatusBadge({ status }: { status: OrderStatus }) {
 
 const waitlistStatusMap: Record<WaitlistStatus, { label: string; className: string }> = {
   WAITING: { label: '대기중', className: 'bg-secondary text-secondary-foreground' },
-  OFFERED: { label: '예매 가능', className: 'bg-warning/25 text-warning-foreground' },
+  OFFERED: { label: '예매 가능', className: 'bg-warning/25 text-warning' },
   PURCHASED: { label: '구매완료', className: 'bg-success/15 text-success' },
   EXPIRED: { label: '대기 종료', className: 'bg-destructive/10 text-destructive' },
   CANCELLED: { label: '대기취소', className: 'bg-muted text-muted-foreground' },

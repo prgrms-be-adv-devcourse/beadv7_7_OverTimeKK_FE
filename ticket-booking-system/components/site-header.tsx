@@ -42,7 +42,7 @@ export function SiteHeader() {
             <Ticket className="size-4.5" />
           </span>
           <span className="text-lg font-bold tracking-tight">
-            Ticket<span className="text-primary">Wait</span>
+            Re<span className="text-primary">Seat</span>
           </span>
         </Link>
 

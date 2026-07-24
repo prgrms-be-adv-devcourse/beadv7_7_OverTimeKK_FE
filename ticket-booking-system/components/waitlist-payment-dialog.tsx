@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { CreditCard, Clock } from 'lucide-react'
+import { CreditCard, Clock, Coins } from 'lucide-react'
 import { toast } from 'sonner'
 import {
   Dialog,
@@ -12,11 +12,17 @@ import {
   DialogFooter,
 } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
 import { ZoneBadge } from '@/components/status-badges'
+import { BookingSteps } from '@/components/booking-steps'
+import { TossPayment } from '@/components/toss-payment'
 import { useApp } from '@/lib/store'
 import { api } from '@/lib/api'
 import { formatKRW, formatDay, formatTime } from '@/lib/domain'
 import type { Performance, PerformanceSession, WaitlistEntry } from '@/lib/types'
+
+/** 대기순번 매칭으로 배정된 비지정석은 좌석 선택 단계가 없어 2단계(가격 선택 → 결제)로 시작 */
+const STEP_LABELS = ['가격 선택', '결제']
 
 /** 남은 시간을 실시간(절대 만료시각 기준)으로 계산 — 창을 닫았다 열어도 시간은 계속 흐른다. */
 function remainingSeconds(expiresAt?: string): number {
@@ -43,9 +49,11 @@ export function WaitlistPaymentDialog({
   performance: Performance
   session: PerformanceSession
 }) {
-  const { acceptWaitlistOffer, cancelWaitlistOffer } = useApp()
+  const { acceptWaitlistOffer, cancelWaitlistOffer, points } = useApp()
   const [remaining, setRemaining] = useState(() => remainingSeconds(entry.offerExpiresAt))
   const [processing, setProcessing] = useState(false)
+  const [step, setStep] = useState<'price' | 'pay'>('price')
+  const [pointsInput, setPointsInput] = useState('0')
 
   // 절대 만료시각 기준으로 1초마다 남은 시간 재계산
   useEffect(() => {
@@ -62,14 +70,24 @@ export function WaitlistPaymentDialog({
     ? api.listZonePrices(performance.id).find((p) => p.zone === zone)?.price ?? 0
     : 0
 
-  function handlePay() {
+  const maxUsablePoints = Math.max(0, Math.min(points, price))
+  const pointsUsed = Math.max(0, Math.min(Number(pointsInput) || 0, maxUsablePoints))
+  const finalAmount = price - pointsUsed
+
+  function handlePointsChange(raw: string) {
+    const digitsOnly = raw.replace(/[^0-9]/g, '')
+    const clamped = Math.min(Number(digitsOnly) || 0, maxUsablePoints)
+    setPointsInput(String(clamped))
+  }
+
+  function handlePay(method: string) {
     if (expired) {
       toast.error('결제 제한 시간이 지났습니다.')
       return
     }
     setProcessing(true)
     try {
-      acceptWaitlistOffer(entry.id)
+      acceptWaitlistOffer(entry.id, method, pointsUsed)
       toast.success('결제가 완료되었습니다.', {
         description: '우선 예매가 확정되어 발권되었습니다.',
       })
@@ -110,12 +128,14 @@ export function WaitlistPaymentDialog({
           </DialogDescription>
         </DialogHeader>
 
+        <BookingSteps steps={STEP_LABELS} current={step === 'price' ? 0 : 1} />
+
         {/* 결제 제한 시간 카운트다운 */}
         <div
           className={`flex items-center justify-between rounded-lg border p-3 ${
             expired
               ? 'border-destructive/30 bg-destructive/10 text-destructive'
-              : 'border-warning/30 bg-warning/10 text-warning-foreground'
+              : 'border-warning/30 bg-warning/10 text-warning'
           }`}
         >
           <span className="flex items-center gap-2 text-sm font-medium">
@@ -133,29 +153,83 @@ export function WaitlistPaymentDialog({
           </p>
         )}
 
-        <div className="space-y-2 rounded-lg border border-border bg-secondary/20 p-3 text-sm">
-          <div className="flex items-center justify-between">
-            <span className="text-muted-foreground">배정 구역</span>
-            {zone && <ZoneBadge zone={zone} />}
-          </div>
-          <div className="flex items-center justify-between">
-            <span className="text-muted-foreground">수량</span>
-            <span>1매</span>
-          </div>
-          <div className="flex items-center justify-between border-t border-border pt-2">
-            <span className="font-medium">결제 금액</span>
-            <span className="font-semibold">{formatKRW(price)}</span>
-          </div>
-        </div>
+        {step === 'price' && (
+          <>
+            <div className="space-y-2 rounded-lg border border-border bg-secondary/20 p-3 text-sm">
+              <div className="flex items-center justify-between">
+                <span className="text-muted-foreground">배정 구역</span>
+                {zone && <ZoneBadge zone={zone} />}
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-muted-foreground">수량</span>
+                <span>1매</span>
+              </div>
+            </div>
 
-        <DialogFooter>
-          <Button variant="outline" onClick={handleCancel} disabled={processing}>
-            결제 취소
-          </Button>
-          <Button onClick={handlePay} disabled={processing || expired}>
-            결제하기
-          </Button>
-        </DialogFooter>
+            <div className="space-y-2 rounded-lg border border-border bg-secondary/20 p-3">
+              <div className="flex items-center justify-between text-sm">
+                <span className="flex items-center gap-1.5 font-medium">
+                  <Coins className="size-3.5 text-warning" />
+                  포인트 사용
+                </span>
+                <span className="text-xs text-muted-foreground">잔여 포인트: {formatKRW(points)}</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <Input
+                  inputMode="numeric"
+                  value={pointsInput}
+                  onChange={(e) => handlePointsChange(e.target.value)}
+                  disabled={maxUsablePoints <= 0 || expired}
+                  className="text-right"
+                />
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setPointsInput(String(maxUsablePoints))}
+                  disabled={maxUsablePoints <= 0 || expired}
+                >
+                  모두 사용
+                </Button>
+              </div>
+            </div>
+
+            <div className="space-y-1.5 rounded-lg border border-border bg-secondary/20 p-3 text-sm">
+              <div className="flex items-center justify-between text-muted-foreground">
+                <span>티켓 금액</span>
+                <span>{formatKRW(price)}</span>
+              </div>
+              {pointsUsed > 0 && (
+                <div className="flex items-center justify-between text-warning">
+                  <span>포인트 사용</span>
+                  <span>-{formatKRW(pointsUsed)}</span>
+                </div>
+              )}
+              <div className="flex items-center justify-between border-t border-border pt-2">
+                <span className="font-medium">결제 금액</span>
+                <span className="font-semibold">{formatKRW(finalAmount)}</span>
+              </div>
+            </div>
+
+            <DialogFooter>
+              <Button variant="outline" onClick={handleCancel} disabled={processing}>
+                결제 취소
+              </Button>
+              <Button onClick={() => setStep('pay')} disabled={expired}>
+                다음
+              </Button>
+            </DialogFooter>
+          </>
+        )}
+
+        {step === 'pay' && (
+          <>
+            <TossPayment amount={finalAmount} onApproved={handlePay} />
+            <Button variant="ghost" size="sm" onClick={() => setStep('price')} disabled={processing}>
+              이전
+            </Button>
+          </>
+        )}
       </DialogContent>
     </Dialog>
   )

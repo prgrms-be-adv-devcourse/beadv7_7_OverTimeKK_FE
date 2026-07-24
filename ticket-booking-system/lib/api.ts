@@ -42,7 +42,8 @@ function clone<T>(v: T): T {
   return structuredClone(v)
 }
 
-let counter = 1000
+// 시드 데이터의 ID(o_1001, pay_1001 등)와 충돌하지 않도록 충분히 높은 값에서 시작
+let counter = 100000
 function nextId(prefix: string): string {
   counter += 1
   return `${prefix}_${counter}`
@@ -307,6 +308,7 @@ export const api = {
     selectedSeats?: { zone: Zone; seatLabels: string[] }[]
     method?: string
     fromWaitlist?: boolean
+    pointsUsed?: number
   }): { order: Order; payment: Payment } {
     const prices = db.zonePrices.filter((z) => z.performanceId === input.performanceId)
     const seatSelections = (input.selectedSeats ?? input.selections.map((s) => ({
@@ -331,6 +333,10 @@ export const api = {
     if (items.length === 0) throw new Error('선택된 좌석이 없습니다.')
 
     const totalAmount = items.reduce((sum, it) => sum + it.unitPrice * it.quantity, 0)
+
+    const buyer = db.users.find((u) => u.id === input.buyerId)
+    const pointsUsed = Math.max(0, Math.min(input.pointsUsed ?? 0, buyer?.points ?? 0, totalAmount))
+
     const order: Order = {
       id: nextId('o'),
       buyerId: input.buyerId,
@@ -338,6 +344,7 @@ export const api = {
       sessionId: input.sessionId,
       items,
       totalAmount,
+      pointsUsed,
       status: 'PAID',
       fromWaitlist: input.fromWaitlist ?? false,
       createdAt: formatNow(),
@@ -347,13 +354,25 @@ export const api = {
     const payment: Payment = {
       id: nextId('pay'),
       orderId: order.id,
-      amount: totalAmount,
+      amount: totalAmount - pointsUsed,
       method: input.method ?? '토스페이',
       status: 'APPROVED',
       pgTransactionKey: `toss_${Math.random().toString(16).slice(2, 12)}`,
       approvedAt: formatNow(),
     }
     db.payments.push(payment)
+
+    if (pointsUsed > 0 && buyer) {
+      buyer.points -= pointsUsed
+      db.points.push({
+        id: nextId('pt'),
+        userId: input.buyerId,
+        type: 'USE',
+        amount: pointsUsed,
+        reason: `티켓 구매 시 포인트 사용 #${order.id}`,
+        createdAt: formatNow(),
+      })
+    }
 
     // 매진 여부 갱신
     refreshSoldOut(input.performanceId)
@@ -505,7 +524,7 @@ export const api = {
   },
 
   // POST /api/waitlist/{id}/accept  (우선예매 결제 → 발권)
-  acceptWaitlistOffer(entryId: string, method?: string): { order: Order; payment: Payment } {
+  acceptWaitlistOffer(entryId: string, method?: string, pointsUsed?: number): { order: Order; payment: Payment } {
     const entry = db.waitlist.find((w) => w.id === entryId)
     if (!entry) throw new Error('대기 정보를 찾을 수 없습니다.')
     if (entry.status !== 'OFFERED') throw new Error('예매 가능한 상태가 아닙니다.')
@@ -520,6 +539,7 @@ export const api = {
       selections: [{ zone, quantity: 1 }],
       method,
       fromWaitlist: true,
+      pointsUsed,
     })
     entry.status = 'PURCHASED'
     entry.position = 0
