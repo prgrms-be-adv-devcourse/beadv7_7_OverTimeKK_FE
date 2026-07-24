@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useMemo, useState } from 'react'
-import { Ticket, CheckCircle2 } from 'lucide-react'
+import { Ticket, CheckCircle2, Coins } from 'lucide-react'
 import { toast } from 'sonner'
 import {
   Dialog,
@@ -11,12 +11,16 @@ import {
   DialogDescription,
 } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
 import { ZoneBadge } from '@/components/status-badges'
+import { BookingSteps } from '@/components/booking-steps'
 import { TossPayment } from '@/components/toss-payment'
 import { WaitlistDialog } from '@/components/waitlist-dialog'
 import { useApp } from '@/lib/store'
 import { canWaitlistZone, formatKRW, formatDay, formatTime } from '@/lib/domain'
 import type { Order, Performance, PerformanceSession, Zone } from '@/lib/types'
+
+const STEP_LABELS = ['좌석 선택', '가격 선택', '결제']
 
 interface ZoneRow {
   zone: Zone
@@ -51,29 +55,43 @@ export function BookingDialog({
   session: PerformanceSession
   zoneRows: ZoneRow[]
 }) {
-  const { createOrder, userId } = useApp()
-  const [step, setStep] = useState<'select' | 'pay' | 'done'>('select')
+  const { createOrder, userId, points, heldSeat, holdSeat, releaseSeat } = useApp()
+
+  const heldSeatsForThisSession = useMemo<Record<Zone, string[]>>(() => {
+    const empty: Record<Zone, string[]> = { VIP: [], R: [], S: [], A: [] }
+    if (
+      heldSeat &&
+      heldSeat.performanceId === performance.id &&
+      heldSeat.sessionId === session.id
+    ) {
+      empty[heldSeat.zone] = [heldSeat.seatId]
+    }
+    return empty
+  }, [heldSeat, performance.id, session.id])
+
+  const [step, setStep] = useState<'select' | 'price' | 'pay' | 'done'>('select')
   const [activeZone, setActiveZone] = useState<Zone | null>(null)
-  const [selectedSeats, setSelectedSeats] = useState<Record<Zone, string[]>>({
-    VIP: [],
-    R: [],
-    S: [],
-    A: [],
-  })
+  const [selectedSeats, setSelectedSeats] = useState<Record<Zone, string[]>>(heldSeatsForThisSession)
   const [order, setOrder] = useState<Order | null>(null)
   const [waitlistOpen, setWaitlistOpen] = useState(false)
   const [waitlistPrefillZones, setWaitlistPrefillZones] = useState<Zone[]>([])
+  const [pointsInput, setPointsInput] = useState('0')
 
   useEffect(() => {
     if (open) {
       setStep('select')
-      setSelectedSeats({ VIP: [], R: [], S: [], A: [] })
+      setSelectedSeats(heldSeatsForThisSession)
       setOrder(null)
       setWaitlistOpen(false)
       setWaitlistPrefillZones([])
-      const firstAvailable = zoneRows.find((z) => z.remaining > 0)?.zone ?? null
+      setPointsInput('0')
+      const preselectedZone = (Object.entries(heldSeatsForThisSession) as [Zone, string[]][]).find(
+        ([, labels]) => labels.length > 0,
+      )?.[0]
+      const firstAvailable = preselectedZone ?? zoneRows.find((z) => z.remaining > 0)?.zone ?? null
       setActiveZone(firstAvailable)
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, zoneRows])
 
   const seatSelections = useMemo(
@@ -89,6 +107,16 @@ export function BookingDialog({
     const row = zoneRows.find((z) => z.zone === item.zone)
     return sum + (row?.price ?? 0) * item.labels.length
   }, 0)
+
+  const maxUsablePoints = Math.max(0, Math.min(points, total))
+  const pointsUsed = Math.max(0, Math.min(Number(pointsInput) || 0, maxUsablePoints))
+  const finalAmount = total - pointsUsed
+
+  function handlePointsChange(raw: string) {
+    const digitsOnly = raw.replace(/[^0-9]/g, '')
+    const clamped = Math.min(Number(digitsOnly) || 0, maxUsablePoints)
+    setPointsInput(String(clamped))
+  }
 
   const seatMap = useMemo(() => {
     if (!activeZone) return []
@@ -147,6 +175,7 @@ export function BookingDialog({
 
     if (alreadySelected) {
       setSelectedSeats((prev) => ({ ...prev, [zone]: [] }))
+      releaseSeat()
       return
     }
 
@@ -157,6 +186,7 @@ export function BookingDialog({
       A: [],
       [zone]: [seatId],
     })
+    holdSeat({ performanceId: performance.id, sessionId: session.id, zone, seatId })
   }
 
   function handlePay(method: string) {
@@ -169,9 +199,11 @@ export function BookingDialog({
         selections: selectedSeatPayload.map(({ zone, seatLabels }) => ({ zone, quantity: seatLabels.length })),
         selectedSeats: selectedSeatPayload,
         method,
+        pointsUsed,
       })
       setOrder(order)
       setStep('done')
+      releaseSeat()
       toast.success('결제가 완료되어 티켓이 발권되었습니다.')
     } catch (e) {
       toast.error(e instanceof Error ? e.message : '결제에 실패했습니다.')
@@ -301,9 +333,90 @@ export function BookingDialog({
               <span className="text-lg font-bold">{formatKRW(total)}</span>
             </div>
 
-            <Button size="lg" className="w-full" disabled={totalCount === 0} onClick={() => setStep('pay')}>
-              결제 진행
+            <Button size="lg" className="w-full" disabled={totalCount === 0} onClick={() => setStep('price')}>
+              좌석 선택 완료
             </Button>
+          </>
+        )}
+
+        {step === 'price' && (
+          <>
+            <DialogHeader>
+              <DialogTitle>가격 선택</DialogTitle>
+              <DialogDescription>
+                {totalCount}석 · {performance.title}
+              </DialogDescription>
+            </DialogHeader>
+            <BookingSteps steps={STEP_LABELS} current={1} />
+
+            <div className="space-y-2 rounded-lg border border-border bg-secondary/20 p-3 text-sm">
+              <p className="font-medium">티켓 가격</p>
+              {seatSelections.map((item) => {
+                const row = zoneRows.find((z) => z.zone === item.zone)
+                return (
+                  <div key={item.zone} className="flex items-center justify-between">
+                    <span className="flex items-center gap-1.5">
+                      <ZoneBadge zone={item.zone} /> {item.labels.length}매
+                    </span>
+                    <span>{formatKRW((row?.price ?? 0) * item.labels.length)}</span>
+                  </div>
+                )
+              })}
+            </div>
+
+            <div className="space-y-2 rounded-lg border border-border bg-secondary/20 p-3">
+              <div className="flex items-center justify-between text-sm">
+                <span className="flex items-center gap-1.5 font-medium">
+                  <Coins className="size-3.5 text-warning" />
+                  포인트 사용
+                </span>
+                <span className="text-xs text-muted-foreground">잔여 포인트: {formatKRW(points)}</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <Input
+                  inputMode="numeric"
+                  value={pointsInput}
+                  onChange={(e) => handlePointsChange(e.target.value)}
+                  disabled={maxUsablePoints <= 0}
+                  className="text-right"
+                />
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setPointsInput(String(maxUsablePoints))}
+                  disabled={maxUsablePoints <= 0}
+                >
+                  모두 사용
+                </Button>
+              </div>
+            </div>
+
+            <div className="space-y-1.5 rounded-lg border border-border bg-secondary/20 p-3 text-sm">
+              <div className="flex items-center justify-between text-muted-foreground">
+                <span>티켓금액</span>
+                <span>{formatKRW(total)}</span>
+              </div>
+              {pointsUsed > 0 && (
+                <div className="flex items-center justify-between text-warning">
+                  <span>포인트 사용</span>
+                  <span>-{formatKRW(pointsUsed)}</span>
+                </div>
+              )}
+              <div className="flex items-center justify-between border-t border-border pt-2">
+                <span className="font-medium">총 결제금액</span>
+                <span className="text-lg font-bold">{formatKRW(finalAmount)}</span>
+              </div>
+            </div>
+
+            <div className="flex gap-2">
+              <Button variant="outline" onClick={() => setStep('select')}>
+                이전
+              </Button>
+              <Button className="flex-1" size="lg" onClick={() => setStep('pay')}>
+                다음
+              </Button>
+            </div>
           </>
         )}
 
@@ -315,9 +428,10 @@ export function BookingDialog({
                 {totalCount}석 · {performance.title}
               </DialogDescription>
             </DialogHeader>
-            <TossPayment amount={total} onApproved={handlePay} />
-            <Button variant="ghost" size="sm" onClick={() => setStep('select')}>
-              좌석 다시 선택
+            <BookingSteps steps={STEP_LABELS} current={2} />
+            <TossPayment amount={finalAmount} onApproved={handlePay} />
+            <Button variant="ghost" size="sm" onClick={() => setStep('price')}>
+              이전
             </Button>
           </>
         )}
@@ -350,9 +464,15 @@ export function BookingDialog({
                   </div>
                 ))}
               </div>
+              {!!order.pointsUsed && (
+                <div className="flex items-center justify-between text-sm text-warning">
+                  <span>포인트 사용</span>
+                  <span>-{formatKRW(order.pointsUsed)}</span>
+                </div>
+              )}
               <div className="flex items-center justify-between border-t border-border pt-2 text-sm font-semibold">
                 <span>결제금액</span>
-                <span>{formatKRW(order.totalAmount)}</span>
+                <span>{formatKRW(order.totalAmount - (order.pointsUsed ?? 0))}</span>
               </div>
             </div>
             <Button className="w-full" onClick={() => onOpenChange(false)}>

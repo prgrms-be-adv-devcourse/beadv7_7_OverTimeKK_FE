@@ -39,10 +39,14 @@ export function WaitlistDialog({
   const availableZones = zones
 
   useEffect(() => {
+    // 다이얼로그가 열릴 때에만 선택 상태를 초기화한다.
+    // prefillZones/zones 는 매 렌더마다 새 배열 참조라 의존성에 넣으면
+    // 구역 선택 시 리렌더 → 이펙트 재실행 → 선택이 즉시 초기화되는 버그가 발생한다.
     if (open) {
       setSelected(prefillZones.filter((zone) => zones.includes(zone)))
     }
-  }, [open, prefillZones])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open])
 
   function toggle(zone: Zone) {
     if (!availableZones.includes(zone)) {
@@ -92,7 +96,7 @@ export function WaitlistDialog({
 
         <div className="rounded-lg border border-primary/20 bg-primary/5 p-3 text-xs text-muted-foreground">
           현재 공연 기준으로 매진된 VIP석과 S석만 대기 신청할 수 있습니다. 선택한 구역 중 취소표가
-          나오면 대기 순서에 따라 한 명에게 우선 예매권이 부여되며, 제한 시간(10분) 내 결제하지
+          나오면 대기 순서에 따라 한 명에게 우선 예매권이 부여되며, 제한 시간(30분) 내 결제하지
           않으면 다음 대기자에게 넘어갑니다.
         </div>
 

@@ -141,7 +141,7 @@ export function BookingPanel({ performance }: { performance: Performance }) {
                   z.remaining <= 0
                     ? 'text-destructive'
                     : z.remaining <= 5
-                      ? 'text-warning-foreground'
+                      ? 'text-warning'
                       : 'text-muted-foreground',
                 )}
               >

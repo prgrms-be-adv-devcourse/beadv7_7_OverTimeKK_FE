@@ -102,6 +102,8 @@ export interface Order {
   sessionId: string
   items: OrderItem[]
   totalAmount: number
+  /** 결제 시 사용한 포인트 */
+  pointsUsed?: number
   /** 취소 시 실제 환불된 금액 */
   refundedAmount?: number
   status: OrderStatus
@@ -183,5 +185,5 @@ export interface PointTransaction {
 export const PLATFORM_FEE_RATE = 0.05
 /** 공연 종료 다음 날 구매자에게 지급되는 포인트 적립률 */
 export const POINT_EARN_RATE = 0.01
-/** 우선 예매 권한 결제 제한 시간(초) */
-export const WAITLIST_OFFER_TTL_SECONDS = 600
+/** 우선 예매 권한 결제 제한 시간(초) — 취소표 배정 후 30분 내 결제 필요 */
+export const WAITLIST_OFFER_TTL_SECONDS = 1800

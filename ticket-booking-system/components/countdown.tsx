@@ -90,7 +90,7 @@ export function PaymentTimer({
 
   return (
     <span
-      className={`tabular-nums font-bold ${urgent ? 'text-destructive' : 'text-warning-foreground'} ${className ?? ''}`}
+      className={`tabular-nums font-bold ${urgent ? 'text-destructive' : 'text-warning'} ${className ?? ''}`}
     >
       {mm}:{ss}
     </span>

@@ -36,7 +36,7 @@ export default function SellerMyPage() {
             <p className="text-sm font-medium text-primary">판매자 마이페이지</p>
             <h1 className="mt-1 text-2xl font-bold">포인트 · 주문 · 정산 내역</h1>
           </div>
-          <div className="flex items-center gap-2 rounded-full bg-warning/10 px-3 py-2 text-warning-foreground">
+          <div className="flex items-center gap-2 rounded-full bg-warning/10 px-3 py-2 text-warning">
             <Coins className="size-4" />
             <span className="font-semibold">{formatKRW(api.getUser(userId)?.points ?? 0)}</span>
           </div>

@@ -1,25 +1,26 @@
 'use client'
 
 import { useMemo, useState } from 'react'
-import { Ticket, Bell, TrendingUp } from 'lucide-react'
+import { Bell } from 'lucide-react'
 import { PerformanceCard } from '@/components/performance-card'
 import { Button } from '@/components/ui/button'
 import { useApp } from '@/lib/store'
 import { api } from '@/lib/api'
-import type { PerformanceStatus } from '@/lib/types'
 
-type Filter = 'ALL' | 'ON_SALE' | 'SOLD_OUT' | 'UPCOMING'
+type Filter = 'ALL' | 'ON_SALE' | 'UPCOMING'
 
 const FILTERS: { key: Filter; label: string }[] = [
   { key: 'ALL', label: '전체' },
   { key: 'ON_SALE', label: '예매중' },
-  { key: 'SOLD_OUT', label: '매진' },
   { key: 'UPCOMING', label: '오픈예정' },
 ]
+
+const PAGE_SIZE = 3
 
 export default function HomePage() {
   const { version } = useApp()
   const [filter, setFilter] = useState<Filter>('ALL')
+  const [page, setPage] = useState(1)
 
   const performances = useMemo(() => {
     // version 을 참조해 데이터 변경 시 재계산
@@ -32,14 +33,18 @@ export default function HomePage() {
       if (filter === 'ALL') return true
       if (filter === 'UPCOMING') return !api.ticketOpened(p)
       if (filter === 'ON_SALE') return p.status === 'ON_SALE'
-      if (filter === 'SOLD_OUT') return p.status === 'SOLD_OUT'
       return true
     })
   }, [performances, filter])
 
-  const soldOutCount = performances.filter(
-    (p: { status: PerformanceStatus }) => p.status === 'SOLD_OUT',
-  ).length
+  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE))
+  const currentPage = Math.min(page, totalPages)
+  const paged = filtered.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE)
+
+  const handleFilterChange = (f: Filter) => {
+    setFilter(f)
+    setPage(1)
+  }
 
   return (
     <div>
@@ -58,26 +63,6 @@ export default function HomePage() {
               매진된 공연도 원하는 구역을 최대 3개까지 선택해 대기하세요. 취소표가 나오면 순서대로
               우선 예매 기회를 알려드립니다.
             </p>
-            <div className="flex flex-wrap gap-6 pt-2">
-              <div className="flex items-center gap-2">
-                <div className="flex size-9 items-center justify-center rounded-lg bg-primary/10 text-primary">
-                  <Ticket className="size-5" />
-                </div>
-                <div>
-                  <p className="text-lg font-semibold leading-none">{performances.length}</p>
-                  <p className="text-xs text-muted-foreground">진행 공연</p>
-                </div>
-              </div>
-              <div className="flex items-center gap-2">
-                <div className="flex size-9 items-center justify-center rounded-lg bg-destructive/10 text-destructive">
-                  <TrendingUp className="size-5" />
-                </div>
-                <div>
-                  <p className="text-lg font-semibold leading-none">{soldOutCount}</p>
-                  <p className="text-xs text-muted-foreground">매진 · 대기 가능</p>
-                </div>
-              </div>
-            </div>
           </div>
         </div>
       </section>
@@ -92,7 +77,7 @@ export default function HomePage() {
                 key={f.key}
                 size="sm"
                 variant={filter === f.key ? 'default' : 'outline'}
-                onClick={() => setFilter(f.key)}
+                onClick={() => handleFilterChange(f.key)}
               >
                 {f.label}
               </Button>
@@ -103,11 +88,44 @@ export default function HomePage() {
         {filtered.length === 0 ? (
           <p className="py-20 text-center text-muted-foreground">해당 조건의 공연이 없습니다.</p>
         ) : (
-          <div className="grid grid-cols-2 gap-4 md:grid-cols-3 lg:grid-cols-4">
-            {filtered.map((p) => (
-              <PerformanceCard key={p.id} performance={p} />
-            ))}
-          </div>
+          <>
+            <div className="grid grid-cols-2 gap-4 md:grid-cols-3 lg:grid-cols-4">
+              {paged.map((p) => (
+                <PerformanceCard key={p.id} performance={p} />
+              ))}
+            </div>
+
+            {totalPages > 1 && (
+              <div className="mt-8 flex items-center justify-center gap-1.5">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={currentPage === 1}
+                  onClick={() => setPage(currentPage - 1)}
+                >
+                  이전
+                </Button>
+                {Array.from({ length: totalPages }, (_, i) => i + 1).map((n) => (
+                  <Button
+                    key={n}
+                    size="sm"
+                    variant={n === currentPage ? 'default' : 'outline'}
+                    onClick={() => setPage(n)}
+                  >
+                    {n}
+                  </Button>
+                ))}
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={currentPage === totalPages}
+                  onClick={() => setPage(currentPage + 1)}
+                >
+                  다음
+                </Button>
+              </div>
+            )}
+          </>
         )}
       </section>
     </div>

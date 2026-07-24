@@ -12,6 +12,15 @@ import type {
   Zone,
   ZonePrice,
 } from './types'
+import { WAITLIST_OFFER_TTL_SECONDS } from './types'
+
+/**
+ * 데모 우선예매 배정 시각.
+ * 취소표 배정은 실시간(Date.now) 기준으로 카운트다운되므로,
+ * 앱을 실행하는 순간부터 30분(WAITLIST_OFFER_TTL_SECONDS)의 결제 제한 시간이 시작됩니다.
+ */
+const SEED_OFFER_AT = new Date()
+const SEED_OFFER_EXPIRES_AT = new Date(SEED_OFFER_AT.getTime() + WAITLIST_OFFER_TTL_SECONDS * 1000)
 
 /**
  * Mock 데이터 시드
@@ -195,9 +204,9 @@ export const seedInventory: SeatInventory[] = [
   { sessionId: 's_opera_3', zone: 'R', total: 120, sold: 118 },
   { sessionId: 's_opera_3', zone: 'S', total: 200, sold: 200 },
   { sessionId: 's_opera_3', zone: 'A', total: 300, sold: 280 },
-  // 위키드 - 전 회차 매진
+  // 위키드 - 전 회차 매진 (s_wicked_1 R석 1장은 취소표 발생 → 우선예매 배정용으로 비워둠)
   { sessionId: 's_wicked_1', zone: 'VIP', total: 40, sold: 40 },
-  { sessionId: 's_wicked_1', zone: 'R', total: 100, sold: 100 },
+  { sessionId: 's_wicked_1', zone: 'R', total: 100, sold: 99 },
   { sessionId: 's_wicked_1', zone: 'S', total: 180, sold: 180 },
   { sessionId: 's_wicked_1', zone: 'A', total: 260, sold: 260 },
   { sessionId: 's_wicked_2', zone: 'VIP', total: 40, sold: 40 },
@@ -272,23 +281,40 @@ export const seedPayments: Payment[] = [
 ]
 
 export const seedWaitlist: WaitlistEntry[] = [
+  // 시나리오: 내 순번이 도착 — R석 취소표가 배정되어 '예매 가능(OFFERED)' 상태.
+  // 상세 → R석 '결제 가능' → 30분 내 결제/결제취소 시나리오 테스트용.
   {
     id: 'w_1',
     buyerId: BUYER_ID,
     performanceId: 'p_wicked',
     sessionId: 's_wicked_1',
     zones: ['VIP', 'R', 'S'],
-    position: 2,
-    status: 'WAITING',
+    position: 0,
+    status: 'OFFERED',
+    offeredZone: 'R',
+    offeredAt: SEED_OFFER_AT.toISOString(),
+    offerExpiresAt: SEED_OFFER_EXPIRES_AT.toISOString(),
     createdAt: '2026-05-21 09:00:00',
   },
-  // 앞선 대기자들 (순번 시뮬레이션용)
+  // 같은 공연(위키드) 2회차에 대한 내 다른 대기 신청.
+  // 1회차 R석 결제가 성공하면 이 신청은 '해당 공연 점유 대기'로 함께 취소된다. (요구사항 5)
+  {
+    id: 'w_1b',
+    buyerId: BUYER_ID,
+    performanceId: 'p_wicked',
+    sessionId: 's_wicked_2',
+    zones: ['VIP', 'R'],
+    position: 1,
+    status: 'WAITING',
+    createdAt: '2026-05-21 09:05:00',
+  },
+  // 뒤이은 대기자들 (순번 시뮬레이션용)
   {
     id: 'w_0',
     buyerId: 'u_other_1',
     performanceId: 'p_wicked',
     sessionId: 's_wicked_1',
-    zones: ['VIP', 'R'],
+    zones: ['VIP'],
     position: 1,
     status: 'WAITING',
     createdAt: '2026-05-20 21:03:00',
@@ -299,7 +325,7 @@ export const seedWaitlist: WaitlistEntry[] = [
     performanceId: 'p_wicked',
     sessionId: 's_wicked_1',
     zones: ['S', 'A'],
-    position: 3,
+    position: 2,
     status: 'WAITING',
     createdAt: '2026-05-22 11:20:00',
   },

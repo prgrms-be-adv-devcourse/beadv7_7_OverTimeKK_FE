@@ -16,7 +16,7 @@ const geistMono = Geist_Mono({
 })
 
 export const metadata: Metadata = {
-  title: 'TicketWait · 취소표 대기 예매 플랫폼',
+  title: 'ReSeat · 취소표 대기 예매 플랫폼',
   description:
     '인기 공연 예매부터 매진 후 취소표 대기까지. 대기 순번에 따라 우선 예매 기회를 드리는 티켓 예매 서비스.',
   generator: 'v0.app',

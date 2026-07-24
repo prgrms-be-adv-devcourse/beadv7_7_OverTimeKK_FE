@@ -42,7 +42,8 @@ function clone<T>(v: T): T {
   return structuredClone(v)
 }
 
-let counter = 1000
+// 시드 데이터의 ID(o_1001, pay_1001 등)와 충돌하지 않도록 충분히 높은 값에서 시작
+let counter = 100000
 function nextId(prefix: string): string {
   counter += 1
   return `${prefix}_${counter}`
@@ -307,6 +308,7 @@ export const api = {
     selectedSeats?: { zone: Zone; seatLabels: string[] }[]
     method?: string
     fromWaitlist?: boolean
+    pointsUsed?: number
   }): { order: Order; payment: Payment } {
     const prices = db.zonePrices.filter((z) => z.performanceId === input.performanceId)
     const seatSelections = (input.selectedSeats ?? input.selections.map((s) => ({
@@ -331,6 +333,10 @@ export const api = {
     if (items.length === 0) throw new Error('선택된 좌석이 없습니다.')
 
     const totalAmount = items.reduce((sum, it) => sum + it.unitPrice * it.quantity, 0)
+
+    const buyer = db.users.find((u) => u.id === input.buyerId)
+    const pointsUsed = Math.max(0, Math.min(input.pointsUsed ?? 0, buyer?.points ?? 0, totalAmount))
+
     const order: Order = {
       id: nextId('o'),
       buyerId: input.buyerId,
@@ -338,6 +344,7 @@ export const api = {
       sessionId: input.sessionId,
       items,
       totalAmount,
+      pointsUsed,
       status: 'PAID',
       fromWaitlist: input.fromWaitlist ?? false,
       createdAt: formatNow(),
@@ -347,13 +354,25 @@ export const api = {
     const payment: Payment = {
       id: nextId('pay'),
       orderId: order.id,
-      amount: totalAmount,
+      amount: totalAmount - pointsUsed,
       method: input.method ?? '토스페이',
       status: 'APPROVED',
       pgTransactionKey: `toss_${Math.random().toString(16).slice(2, 12)}`,
       approvedAt: formatNow(),
     }
     db.payments.push(payment)
+
+    if (pointsUsed > 0 && buyer) {
+      buyer.points -= pointsUsed
+      db.points.push({
+        id: nextId('pt'),
+        userId: input.buyerId,
+        type: 'USE',
+        amount: pointsUsed,
+        reason: `티켓 구매 시 포인트 사용 #${order.id}`,
+        createdAt: formatNow(),
+      })
+    }
 
     // 매진 여부 갱신
     refreshSoldOut(input.performanceId)
@@ -505,7 +524,7 @@ export const api = {
   },
 
   // POST /api/waitlist/{id}/accept  (우선예매 결제 → 발권)
-  acceptWaitlistOffer(entryId: string, method?: string): { order: Order; payment: Payment } {
+  acceptWaitlistOffer(entryId: string, method?: string, pointsUsed?: number): { order: Order; payment: Payment } {
     const entry = db.waitlist.find((w) => w.id === entryId)
     if (!entry) throw new Error('대기 정보를 찾을 수 없습니다.')
     if (entry.status !== 'OFFERED') throw new Error('예매 가능한 상태가 아닙니다.')
@@ -520,17 +539,46 @@ export const api = {
       selections: [{ zone, quantity: 1 }],
       method,
       fromWaitlist: true,
+      pointsUsed,
     })
     entry.status = 'PURCHASED'
     entry.position = 0
+    // 같은 구역을 기다리던 다른 대기자는 취소표가 소진되었으므로 대기 종료
     db.waitlist
       .filter((w) => w.id !== entry.id && w.sessionId === entry.sessionId && w.status === 'WAITING' && w.zones.includes(zone))
       .forEach((w) => {
         w.status = 'EXPIRED'
         w.position = 0
       })
+    // 결제 성공 → 이 구매자가 해당 공연에 점유하던 다른 대기 신청은 모두 취소
+    db.waitlist
+      .filter(
+        (w) =>
+          w.id !== entry.id &&
+          w.buyerId === entry.buyerId &&
+          w.performanceId === entry.performanceId &&
+          (w.status === 'WAITING' || w.status === 'OFFERED'),
+      )
+      .forEach((w) => {
+        w.status = 'CANCELLED'
+        w.position = 0
+      })
     recomputePositions(entry.sessionId)
     return result
+  },
+
+  // POST /api/waitlist/{id}/cancel-offer  (우선예매 결제 취소 → 대기열 취소, 취소표는 다음 대기자에게)
+  cancelWaitlistOffer(entryId: string): WaitlistEntry | null {
+    const entry = db.waitlist.find((w) => w.id === entryId)
+    if (!entry) throw new Error('대기 정보를 찾을 수 없습니다.')
+    if (entry.status !== 'OFFERED') throw new Error('예매 대기 상태가 아닙니다.')
+    const zone = entry.offeredZone!
+    entry.status = 'CANCELLED'
+    entry.position = 0
+    // 배정됐던 취소표는 다음 대기자에게 이전
+    const next = offerToNextWaiter(entry.sessionId, zone)
+    recomputePositions(entry.sessionId)
+    return next ? clone(next) : null
   },
 
   // POST /api/waitlist/{id}/decline  (또는 시간 초과 → 다음 대기자에게 이전)
