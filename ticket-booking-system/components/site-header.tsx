@@ -1,14 +1,20 @@
 'use client'
 
 import Link from 'next/link'
-import { usePathname } from 'next/navigation'
+import { usePathname, useRouter } from 'next/navigation'
 import { Ticket, Bell, Coins } from 'lucide-react'
 import { api } from '@/lib/api'
 import { useApp } from '@/lib/store'
-import { formatKRW } from '@/lib/domain'
+import { formatKRW, formatDay, formatTime } from '@/lib/domain'
 import { cn } from '@/lib/utils'
-import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
+import {
+  DropdownMenu,
+  DropdownMenuTrigger,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+} from '@/components/ui/dropdown-menu'
 
 const buyerNav = [
   { href: '/', label: '공연 예매' },
@@ -25,14 +31,25 @@ const sellerNav = [
 export function SiteHeader() {
   const { role, setRole, userId, userName, points, version } = useApp()
   const pathname = usePathname()
+  const router = useRouter()
   const nav = role === 'BUYER' ? buyerNav : sellerNav
 
   // version 을 참조해 대기열 변경 시 리렌더
   void version
-  const offeredCount =
+  const offeredEntries =
     role === 'BUYER'
-      ? api.listWaitlist(userId).filter((w) => w.status === 'OFFERED').length
-      : 0
+      ? api
+          .listWaitlist(userId)
+          .filter((w) => w.status === 'OFFERED')
+          .map((entry) => {
+            const performance = api.getPerformance(entry.performanceId)
+            const session = api
+              .listSessions(entry.performanceId)
+              .find((s) => s.id === entry.sessionId)
+            return { entry, performance, session }
+          })
+      : []
+  const offeredCount = offeredEntries.length
 
   return (
     <header className="sticky top-0 z-40 border-b border-border bg-background/85 backdrop-blur-md">
@@ -72,18 +89,50 @@ export function SiteHeader() {
 
         <div className="ml-auto flex items-center gap-2">
           {role === 'BUYER' && (
-            <Link
-              href="/waitlist"
-              className="relative hidden rounded-md p-2 text-muted-foreground transition-colors hover:text-foreground sm:inline-flex"
-              aria-label="대기 알림"
-            >
-              <Bell className="size-4.5" />
-              {offeredCount > 0 && (
-                <Badge className="absolute -top-1 -right-1 size-4 min-w-4 rounded-full px-0 tabular-nums">
-                  {offeredCount}
-                </Badge>
-              )}
-            </Link>
+            <DropdownMenu>
+              <DropdownMenuTrigger
+                className="relative hidden rounded-md p-2 text-muted-foreground outline-none transition-colors hover:text-foreground data-popup-open:text-foreground sm:inline-flex"
+                aria-label="대기 알림"
+              >
+                <Bell className="size-4.5" />
+                {offeredCount > 0 && (
+                  <Badge className="absolute -top-1 -right-1 size-4 min-w-4 rounded-full px-0 tabular-nums">
+                    {offeredCount}
+                  </Badge>
+                )}
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-80">
+                <p className="px-1.5 py-1 text-xs font-medium text-muted-foreground">알림</p>
+                <DropdownMenuSeparator />
+                {offeredEntries.length === 0 ? (
+                  <p className="px-1.5 py-4 text-center text-sm text-muted-foreground">
+                    새로운 알림이 없습니다.
+                  </p>
+                ) : (
+                  offeredEntries.map(({ entry, performance, session }) => (
+                    <DropdownMenuItem
+                      key={entry.id}
+                      className="flex-col items-start gap-0.5 py-2"
+                      onClick={() => router.push('/waitlist')}
+                    >
+                      <span className="font-medium text-foreground">
+                        {performance?.title} {entry.offeredZone}석 취소표 매칭 성공! 확인해보세요
+                      </span>
+                      {session && (
+                        <span className="text-xs text-muted-foreground">
+                          {session.sessionNum}회차 · {formatDay(session.performanceStartAt)}{' '}
+                          {formatTime(session.performanceStartAt)}
+                        </span>
+                      )}
+                    </DropdownMenuItem>
+                  ))
+                )}
+                <DropdownMenuSeparator />
+                <DropdownMenuItem onClick={() => router.push('/waitlist')} className="justify-center text-primary">
+                  내 대기 신청 바로가기
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
           )}
 
           <div className="hidden items-center gap-1.5 rounded-md bg-secondary px-2.5 py-1.5 text-sm font-medium sm:flex">
