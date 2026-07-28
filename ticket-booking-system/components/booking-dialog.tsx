@@ -17,6 +17,9 @@ import { BookingSteps } from '@/components/booking-steps'
 import { TossPayment } from '@/components/toss-payment'
 import { WaitlistDialog } from '@/components/waitlist-dialog'
 import { useApp } from '@/lib/store'
+import { api } from '@/lib/api'
+import { orderApi, OrderApiError } from '@/lib/order-api'
+import { performanceApi, PerformanceApiError } from '@/lib/performance-api'
 import { canWaitlistZone, formatKRW, formatDay, formatTime } from '@/lib/domain'
 import type { Order, Performance, PerformanceSession, Zone } from '@/lib/types'
 
@@ -26,13 +29,6 @@ interface ZoneRow {
   zone: Zone
   price: number
   remaining: number
-}
-
-const SEAT_LAYOUT: Record<Zone, { rows: number; cols: number }> = {
-  VIP: { rows: 4, cols: 5 },
-  R: { rows: 5, cols: 6 },
-  S: { rows: 4, cols: 4 },
-  A: { rows: 4, cols: 5 },
 }
 
 function formatSelectedSeatLabel(label: string) {
@@ -76,12 +72,17 @@ export function BookingDialog({
   const [waitlistOpen, setWaitlistOpen] = useState(false)
   const [waitlistPrefillZones, setWaitlistPrefillZones] = useState<Zone[]>([])
   const [pointsInput, setPointsInput] = useState('0')
+  const [realOrder, setRealOrder] = useState<{ orderId: number; paymentId: number } | null>(null)
+
+  // performance-service/v2로 등록된 실제 공연은 숫자 ID를 그대로 쓴다(mock은 'p_xxx' 형태)
+  const isRealPerformance = /^\d+$/.test(performance.id)
 
   useEffect(() => {
     if (open) {
       setStep('select')
       setSelectedSeats(heldSeatsForThisSession)
       setOrder(null)
+      setRealOrder(null)
       setWaitlistOpen(false)
       setWaitlistPrefillZones([])
       setPointsInput('0')
@@ -91,8 +92,12 @@ export function BookingDialog({
       const firstAvailable = preselectedZone ?? zoneRows.find((z) => z.remaining > 0)?.zone ?? null
       setActiveZone(firstAvailable)
     }
+    // zoneRows는 의도적으로 deps에서 뺐다: 결제 성공 시 잔여석이 줄면서 zoneRows 참조가
+    // 바뀌는데, 이걸 deps에 넣으면 다이얼로그가 열려 있는 동안(step==='done'이어도) 이 effect가
+    // 다시 실행돼서 결제 완료 화면이 곧바로 좌석 선택 화면으로 리셋돼버린다. 다이얼로그가
+    // "열릴 때"만 초기화하면 되므로 open만 감시한다.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, zoneRows])
+  }, [open])
 
   const seatSelections = useMemo(
     () =>
@@ -118,35 +123,36 @@ export function BookingDialog({
     setPointsInput(String(clamped))
   }
 
+  const hall = useMemo(() => api.getHall(performance.hallId), [performance.hallId])
+  const inventory = useMemo(() => api.listInventory(session.id), [session.id, zoneRows])
+
   const seatMap = useMemo(() => {
-    if (!activeZone) return []
-    const row = zoneRows.find((z) => z.zone === activeZone)
-    const remaining = Math.max(0, row?.remaining ?? 0)
-    const layout = SEAT_LAYOUT[activeZone]
+    if (!activeZone || !hall) return []
+    const occupied = new Set(inventory.find((i) => i.zone === activeZone)?.occupiedSeats ?? [])
+    const layout = hall.seatLayout[activeZone] ?? []
     const seats: Array<{
       id: string
-      row: number
+      rowLabel: string
       col: number
       sold: boolean
       selected: boolean
     }> = []
 
-    for (let rowIndex = 0; rowIndex < layout.rows; rowIndex += 1) {
-      for (let colIndex = 0; colIndex < layout.cols; colIndex += 1) {
-        const seatIndex = rowIndex * layout.cols + colIndex
-        const seatId = `${activeZone}-${rowIndex + 1}-${colIndex + 1}`
+    for (const rowLayout of layout) {
+      for (let colIndex = 0; colIndex < rowLayout.count; colIndex += 1) {
+        const seatId = `${activeZone}-${rowLayout.row}-${colIndex + 1}`
         seats.push({
           id: seatId,
-          row: rowIndex + 1,
+          rowLabel: rowLayout.row,
           col: colIndex + 1,
-          sold: seatIndex >= remaining,
+          sold: occupied.has(seatId),
           selected: (selectedSeats[activeZone] ?? []).includes(seatId),
         })
       }
     }
 
     return seats
-  }, [activeZone, selectedSeats, zoneRows])
+  }, [activeZone, hall, inventory, selectedSeats])
 
   function selectZone(zone: Zone) {
     const target = zoneRows.find((z) => z.zone === zone)
@@ -205,8 +211,39 @@ export function BookingDialog({
       setStep('done')
       releaseSeat()
       toast.success('결제가 완료되어 티켓이 발권되었습니다.')
+
+      if (isRealPerformance) {
+        const first = selectedSeatPayload[0]
+        const firstLabel = first?.seatLabels[0]
+        if (first && firstLabel) {
+          void syncRealOrder(first.zone, firstLabel)
+        }
+      }
     } catch (e) {
       toast.error(e instanceof Error ? e.message : '결제에 실패했습니다.')
+    }
+  }
+
+  // 실제 공연에 한해, 화면에서 고른 좌석에 대응하는 실제 ticketId를 찾아(GET /api/tickets)
+  // order-service에도 주문/결제를 남겨본다 — mock 예매와는 별개의 그림자 호출이라 실패해도
+  // 화면 표시엔 영향 없음.
+  async function syncRealOrder(zone: Zone, seatLabel: string) {
+    try {
+      const [, row, col] = seatLabel.split('-')
+      const tickets = await performanceApi.tickets(Number(performance.id), session.sessionNum, zone)
+      const match = tickets.find((t) => t.seatRow === row && t.seatNum === col && t.ticketStatus === 'AVAILABLE')
+      if (!match) {
+        console.warn('실제 좌석 매핑 실패(이미 판매되었거나 좌석 배치 불일치) — 화면 표시엔 영향 없음:', { zone, row, col })
+        return
+      }
+      const created = await orderApi.createOrder(match.ticketId)
+      const paid = await orderApi.pay(created.orderId, match.price)
+      const confirmed = await orderApi.confirm(paid.paymentId, paid.transactionKey)
+      setRealOrder({ orderId: created.orderId, paymentId: confirmed.paymentId })
+    } catch (e) {
+      const message =
+        e instanceof OrderApiError || e instanceof PerformanceApiError ? `${e.code} ${e.message}` : String(e)
+      console.warn('실제 order-service 동기화 실패(화면 표시엔 영향 없음):', message)
     }
   }
 
@@ -271,15 +308,14 @@ export function BookingDialog({
                   </div>
 
                   <div className="space-y-2">
-                    {Array.from({ length: SEAT_LAYOUT[activeZone].rows }, (_, index) => {
-                      const rowNumber = index + 1
-                      const rowSeats = seatMap.filter((seat) => seat.row === rowNumber)
+                    {(hall?.seatLayout[activeZone] ?? []).map((rowLayout) => {
+                      const rowSeats = seatMap.filter((seat) => seat.rowLabel === rowLayout.row)
                       return (
-                        <div key={rowNumber} className="flex items-center gap-2">
-                          <span className="w-8 text-center text-xs font-semibold text-muted-foreground">{rowNumber}행</span>
+                        <div key={rowLayout.row} className="flex items-center gap-2">
+                          <span className="w-8 text-center text-xs font-semibold text-muted-foreground">{rowLayout.row}행</span>
                           <div
                             className="grid flex-1 gap-2"
-                            style={{ gridTemplateColumns: `repeat(${SEAT_LAYOUT[activeZone].cols}, minmax(0, 1fr))` }}
+                            style={{ gridTemplateColumns: `repeat(${rowLayout.count}, minmax(0, 1fr))` }}
                           >
                             {rowSeats.map((seat) => (
                               <button
@@ -475,6 +511,11 @@ export function BookingDialog({
                 <span>{formatKRW(order.totalAmount - (order.pointsUsed ?? 0))}</span>
               </div>
             </div>
+            {realOrder && (
+              <p className="text-xs text-muted-foreground">
+                실제 order-service 주문 #{realOrder.orderId} · 결제 #{realOrder.paymentId} 승인 완료
+              </p>
+            )}
             <Button className="w-full" onClick={() => onOpenChange(false)}>
               확인
             </Button>

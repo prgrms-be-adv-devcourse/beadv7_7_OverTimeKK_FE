@@ -7,6 +7,8 @@ import { api } from '@/lib/api'
 import { useApp } from '@/lib/store'
 import { formatKRW, formatDay, formatTime } from '@/lib/domain'
 import { cn } from '@/lib/utils'
+import { useMyStandby } from '@/lib/use-standby'
+import { STANDBY_USER_ID } from '@/lib/standby-api'
 import { Badge } from '@/components/ui/badge'
 import {
   DropdownMenu,
@@ -29,24 +31,23 @@ const sellerNav = [
 ]
 
 export function SiteHeader() {
-  const { role, setRole, userId, userName, points, version } = useApp()
+  const { role, setRole, userId, userName, points } = useApp()
   const pathname = usePathname()
   const router = useRouter()
   const nav = role === 'BUYER' ? buyerNav : sellerNav
 
-  // version 을 참조해 대기열 변경 시 리렌더
-  void version
+  const { entries } = useMyStandby(userId, STANDBY_USER_ID)
   const offeredEntries =
     role === 'BUYER'
-      ? api
-          .listWaitlist(userId)
-          .filter((w) => w.status === 'OFFERED')
-          .map((entry) => {
-            const performance = api.getPerformance(entry.performanceId)
+      ? entries
+          .filter((e) => e.zoneRanks.some((z) => z.isHeld))
+          .map((e) => {
+            const heldZone = e.zoneRanks.find((z) => z.isHeld)?.zone
+            const performance = api.getPerformance(e.record.performanceId)
             const session = api
-              .listSessions(entry.performanceId)
-              .find((s) => s.id === entry.sessionId)
-            return { entry, performance, session }
+              .listSessions(e.record.performanceId)
+              .find((s) => s.id === e.record.sessionId)
+            return { standbyId: e.record.standbyId, heldZone, performance, session }
           })
       : []
   const offeredCount = offeredEntries.length
@@ -109,14 +110,14 @@ export function SiteHeader() {
                     새로운 알림이 없습니다.
                   </p>
                 ) : (
-                  offeredEntries.map(({ entry, performance, session }) => (
+                  offeredEntries.map(({ standbyId, heldZone, performance, session }) => (
                     <DropdownMenuItem
-                      key={entry.id}
+                      key={standbyId}
                       className="flex-col items-start gap-0.5 py-2"
                       onClick={() => router.push('/waitlist')}
                     >
                       <span className="font-medium text-foreground">
-                        {performance?.title} {entry.offeredZone}석 취소표 매칭 성공! 확인해보세요
+                        {performance?.title} {heldZone}석 취소표 매칭 성공! 확인해보세요
                       </span>
                       {session && (
                         <span className="text-xs text-muted-foreground">

@@ -1,12 +1,7 @@
 import { Badge } from '@/components/ui/badge'
 import { ZONE_META } from '@/lib/domain'
 import { cn } from '@/lib/utils'
-import type {
-  OrderStatus,
-  PerformanceStatus,
-  WaitlistStatus,
-  Zone,
-} from '@/lib/types'
+import type { OrderStatus, PerformanceStatus, Zone } from '@/lib/types'
 
 const perfStatusMap: Record<
   PerformanceStatus,
@@ -58,15 +53,18 @@ export function OrderStatusBadge({ status }: { status: OrderStatus }) {
   return <Badge className={cn('border-transparent', meta.className)}>{meta.label}</Badge>
 }
 
-const waitlistStatusMap: Record<WaitlistStatus, { label: string; className: string }> = {
+/**
+ * 대기(Standby) 요약 상태. 실제 백엔드 조회 API는 zoneRanks(구역별 rank/isHeld)만 내려주고
+ * PURCHASED/EXPIRED 같은 세부 상태는 제공하지 않아(ticket 도메인 소관), WAITING/HELD 두 가지로 단순화.
+ */
+export type StandbySummaryStatus = 'WAITING' | 'HELD'
+
+const standbyStatusMap: Record<StandbySummaryStatus, { label: string; className: string }> = {
   WAITING: { label: '대기중', className: 'bg-secondary text-secondary-foreground' },
-  OFFERED: { label: '예매 가능', className: 'bg-warning/25 text-warning' },
-  PURCHASED: { label: '구매완료', className: 'bg-success/15 text-success' },
-  EXPIRED: { label: '대기 종료', className: 'bg-destructive/10 text-destructive' },
-  CANCELLED: { label: '대기취소', className: 'bg-muted text-muted-foreground' },
+  HELD: { label: '결제 가능', className: 'bg-warning/25 text-warning' },
 }
 
-export function WaitlistStatusBadge({ status }: { status: WaitlistStatus }) {
-  const meta = waitlistStatusMap[status]
+export function WaitlistStatusBadge({ status }: { status: StandbySummaryStatus }) {
+  const meta = standbyStatusMap[status]
   return <Badge className={cn('border-transparent', meta.className)}>{meta.label}</Badge>
 }

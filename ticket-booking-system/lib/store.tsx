@@ -4,12 +4,14 @@ import {
   createContext,
   useCallback,
   useContext,
+  useEffect,
   useMemo,
   useState,
   type ReactNode,
 } from 'react'
 import { api } from './api'
 import { BUYER_ID, SELLER_ID } from './mock-data'
+import { performanceApi } from './performance-api'
 import type { UserRole, Zone } from './types'
 
 /** 좌석 선택 중 임시로 점유된 좌석. 새로고침 시 초기화되고, 페이지 이동만으로는 유지된다. */
@@ -30,6 +32,12 @@ interface AppContextValue {
   /** 데이터 변경 카운터 — 구독 컴포넌트 리렌더 트리거 */
   version: number
   refresh: () => void
+  /**
+   * 실제 performance-service 공연 fetch 시도가 끝났는지(성공/실패 무관).
+   * true가 되기 전엔 "존재하지 않는 공연"인지 "아직 안 불러왔을 뿐"인지 구분할 수 없으므로,
+   * 실제 공연 상세 페이지 등에서 notFound() 판단은 이 값이 true인 뒤에만 해야 한다.
+   */
+  performancesLoaded: boolean
 
   /** 현재 점유 중인 좌석 (한 번에 하나만 선택 가능) */
   heldSeat: HeldSeat | null
@@ -42,17 +50,6 @@ interface AppContextValue {
   createOrder: typeof api.createOrder
   cancelOrder: typeof api.cancelOrder
   requestCancelOrder: typeof api.requestCancelOrder
-  joinWaitlist: (input: { performanceId: string; sessionId: string; zones: Zone[] }) => void
-  cancelWaitlist: (entryId: string) => void
-  cancelWaitlistZone: (entryId: string, zone: Zone) => ReturnType<typeof api.cancelWaitlistZone>
-  acceptWaitlistOffer: (
-    entryId: string,
-    method?: string,
-    pointsUsed?: number,
-  ) => ReturnType<typeof api.acceptWaitlistOffer>
-  declineWaitlistOffer: (entryId: string) => void
-  cancelWaitlistOffer: (entryId: string) => ReturnType<typeof api.cancelWaitlistOffer>
-  simulateCancellation: (sessionId: string, zone: Zone) => ReturnType<typeof api.simulateCancellation>
 
   // 판매자 액션
   createPerformance: typeof api.createPerformance
@@ -71,10 +68,39 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [role, setRole] = useState<UserRole>('BUYER')
   const [version, setVersion] = useState(0)
   const [heldSeat, setHeldSeat] = useState<HeldSeat | null>(null)
+  const [performancesLoaded, setPerformancesLoaded] = useState(false)
 
   const refresh = useCallback(() => setVersion((v) => v + 1), [])
   const holdSeat = useCallback((seat: HeldSeat) => setHeldSeat(seat), [])
   const releaseSeat = useCallback(() => setHeldSeat(null), [])
+
+  // 실제 performance-service의 공연/회차를 mock 목록에 추가로 불러온다.
+  // 백엔드가 꺼져 있거나 실패해도 mock 데이터만으로 앱은 정상 동작해야 하므로 조용히 무시한다.
+  useEffect(() => {
+    let cancelled = false
+    async function loadRealPerformances() {
+      try {
+        const realPerformances = await performanceApi.list()
+        const items = await Promise.all(
+          realPerformances.map(async (real) => ({
+            real,
+            sessions: await performanceApi.sessions(real.performanceId).catch(() => []),
+          })),
+        )
+        if (cancelled) return
+        api.importRealPerformances(items)
+        setVersion((v) => v + 1)
+      } catch {
+        // 백엔드 미기동 등 — mock 데이터만으로 계속 진행
+      } finally {
+        if (!cancelled) setPerformancesLoaded(true)
+      }
+    }
+    loadRealPerformances()
+    return () => {
+      cancelled = true
+    }
+  }, [])
 
   const userId = role === 'BUYER' ? BUYER_ID : SELLER_ID
   const user = api.getUser(userId)
@@ -98,23 +124,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
       points: user?.points ?? 0,
       version,
       refresh,
+      performancesLoaded,
       heldSeat,
       holdSeat,
       releaseSeat,
       createOrder: withRefresh(api.createOrder.bind(api)),
       cancelOrder: withRefresh(api.cancelOrder.bind(api)),
       requestCancelOrder: withRefresh(api.requestCancelOrder.bind(api)),
-      joinWaitlist: withRefresh((input: { performanceId: string; sessionId: string; zones: Zone[] }) =>
-        api.joinWaitlist({ buyerId: userId, ...input }),
-      ),
-      cancelWaitlist: withRefresh((entryId: string) => api.cancelWaitlist(entryId)),
-      cancelWaitlistZone: withRefresh((entryId: string, zone: Zone) => api.cancelWaitlistZone(entryId, zone)),
-      acceptWaitlistOffer: withRefresh(api.acceptWaitlistOffer.bind(api)),
-      declineWaitlistOffer: withRefresh((entryId: string) => {
-        api.declineWaitlistOffer(entryId)
-      }),
-      cancelWaitlistOffer: withRefresh((entryId: string) => api.cancelWaitlistOffer(entryId)),
-      simulateCancellation: withRefresh(api.simulateCancellation.bind(api)),
       createPerformance: withRefresh(api.createPerformance.bind(api)),
       updatePerformance: withRefresh(api.updatePerformance.bind(api)),
       deletePerformance: withRefresh((id: string) => {
@@ -131,7 +147,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       runPointReward: withRefresh(api.runPointReward.bind(api)),
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [role, version, userId, user?.name, user?.points, refresh, withRefresh, heldSeat, holdSeat, releaseSeat])
+  }, [role, version, userId, user?.name, user?.points, refresh, performancesLoaded, withRefresh, heldSeat, holdSeat, releaseSeat])
 
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>
 }

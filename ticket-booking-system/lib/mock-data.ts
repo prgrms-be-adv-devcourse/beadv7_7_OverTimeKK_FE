@@ -8,19 +8,9 @@ import type {
   SeatInventory,
   Settlement,
   User,
-  WaitlistEntry,
   Zone,
   ZonePrice,
 } from './types'
-import { WAITLIST_OFFER_TTL_SECONDS } from './types'
-
-/**
- * 데모 우선예매 배정 시각.
- * 취소표 배정은 실시간(Date.now) 기준으로 카운트다운되므로,
- * 앱을 실행하는 순간부터 30분(WAITLIST_OFFER_TTL_SECONDS)의 결제 제한 시간이 시작됩니다.
- */
-const SEED_OFFER_AT = new Date()
-const SEED_OFFER_EXPIRES_AT = new Date(SEED_OFFER_AT.getTime() + WAITLIST_OFFER_TTL_SECONDS * 1000)
 
 /**
  * Mock 데이터 시드
@@ -48,34 +38,119 @@ export const seedUsers: User[] = [
   },
 ]
 
+/**
+ * performance-service의 실제 venue/hall/seat 시드 데이터(data.sql) 기준으로 옮겨온 공연장 정보.
+ * capacity/seatLayout은 백엔드 seat 테이블(hall_id=1, 7, 13)을 그대로 반영한 값이며,
+ * 좌석/가격/잔여석은 여전히 프론트 정적 데이터로 관리한다(백엔드에 조회 API가 없음).
+ */
 export const seedHalls: Hall[] = [
   {
     id: 'h1',
-    name: '예술의전당 오페라극장',
-    location: '서울 서초구',
-    capacity: { VIP: 60, R: 120, S: 200, A: 300 },
+    name: '서울 아트센터 1홀',
+    location: '서울 강남구',
+    capacity: { VIP: 32, R: 32, S: 40, A: 48 },
+    seatLayout: {
+      VIP: [
+        { row: 'A', count: 10 },
+        { row: 'B', count: 10 },
+        { row: 'C', count: 10 },
+        { row: 'D', count: 2 },
+      ],
+      R: [
+        { row: 'A', count: 10 },
+        { row: 'B', count: 10 },
+        { row: 'C', count: 10 },
+        { row: 'D', count: 2 },
+      ],
+      S: [
+        { row: 'A', count: 10 },
+        { row: 'B', count: 10 },
+        { row: 'C', count: 10 },
+        { row: 'D', count: 10 },
+      ],
+      A: [
+        { row: 'A', count: 10 },
+        { row: 'B', count: 10 },
+        { row: 'C', count: 10 },
+        { row: 'D', count: 10 },
+        { row: 'E', count: 8 },
+      ],
+    },
   },
   {
     id: 'h2',
-    name: '블루스퀘어 신한카드홀',
-    location: '서울 용산구',
-    capacity: { VIP: 40, R: 100, S: 180, A: 260 },
+    name: '한강 문화회관 2홀',
+    location: '서울 영등포구',
+    capacity: { VIP: 28, R: 40, S: 40, A: 44 },
+    seatLayout: {
+      VIP: [
+        { row: 'A', count: 12 },
+        { row: 'B', count: 12 },
+        { row: 'C', count: 4 },
+      ],
+      R: [
+        { row: 'A', count: 10 },
+        { row: 'B', count: 10 },
+        { row: 'C', count: 10 },
+        { row: 'D', count: 10 },
+      ],
+      S: [
+        { row: 'A', count: 8 },
+        { row: 'B', count: 8 },
+        { row: 'C', count: 8 },
+        { row: 'D', count: 8 },
+        { row: 'E', count: 8 },
+      ],
+      A: [
+        { row: 'A', count: 8 },
+        { row: 'B', count: 8 },
+        { row: 'C', count: 8 },
+        { row: 'D', count: 8 },
+        { row: 'E', count: 8 },
+        { row: 'F', count: 4 },
+      ],
+    },
   },
   {
     id: 'h3',
-    name: 'KSPO DOME',
-    location: '서울 송파구',
-    capacity: { VIP: 150, R: 400, S: 700, A: 900 },
+    name: '인천 공연예술관 3홀',
+    location: '인천 남동구',
+    capacity: { VIP: 32, R: 40, S: 36, A: 44 },
+    seatLayout: {
+      VIP: [
+        { row: 'A', count: 12 },
+        { row: 'B', count: 12 },
+        { row: 'C', count: 8 },
+      ],
+      R: [
+        { row: 'A', count: 10 },
+        { row: 'B', count: 10 },
+        { row: 'C', count: 10 },
+        { row: 'D', count: 10 },
+      ],
+      S: [
+        { row: 'A', count: 10 },
+        { row: 'B', count: 10 },
+        { row: 'C', count: 10 },
+        { row: 'D', count: 6 },
+      ],
+      A: [
+        { row: 'A', count: 12 },
+        { row: 'B', count: 12 },
+        { row: 'C', count: 12 },
+        { row: 'D', count: 8 },
+      ],
+    },
   },
 ]
 
 export const seedPerformances: Performance[] = [
   {
-    id: 'p_opera',
+    id: 'p_1000',
     sellerId: SELLER_ID,
     title: '오페라 〈라 트라비아타〉',
     description:
-      '베르디 불멸의 명작. 사랑과 희생을 그린 오페라의 정수를 예술의전당 무대에서 만나보세요.',
+      '베르디 불멸의 명작. 사랑과 희생을 그린 오페라의 정수를 서울 아트센터 무대에서 만나보세요.',
     runtime: 165,
     startDate: '2026-08-05',
     endDate: '2026-08-16',
@@ -86,7 +161,7 @@ export const seedPerformances: Performance[] = [
     status: 'ON_SALE',
   },
   {
-    id: 'p_wicked',
+    id: 'p_1001',
     sellerId: SELLER_ID,
     title: '뮤지컬 〈위키드〉',
     description:
@@ -101,7 +176,7 @@ export const seedPerformances: Performance[] = [
     status: 'SOLD_OUT',
   },
   {
-    id: 'p_concert',
+    id: 'p_1002',
     sellerId: SELLER_ID,
     title: '블루밍 페스티벌 2026',
     description:
@@ -116,7 +191,7 @@ export const seedPerformances: Performance[] = [
     status: 'DRAFT',
   },
   {
-    id: 'p_mystery',
+    id: 'p_1003',
     sellerId: SELLER_ID,
     title: '뮤지컬 〈레베카〉',
     description:
@@ -131,7 +206,7 @@ export const seedPerformances: Performance[] = [
     status: 'ON_SALE',
   },
   {
-    id: 'p_ballad',
+    id: 'p_1004',
     sellerId: SELLER_ID,
     title: '그날의 노래 - 어쿠스틱 콘서트',
     description: '따뜻한 통기타 선율로 채우는 감성 어쿠스틱 무대.',
@@ -148,97 +223,131 @@ export const seedPerformances: Performance[] = [
 
 export const seedSessions: PerformanceSession[] = [
   // 라 트라비아타
-  { id: 's_opera_1', performanceId: 'p_opera', sessionNum: 1, actor: '조수미, 이용훈', performanceStartAt: '2026-08-05 19:30:00' },
-  { id: 's_opera_2', performanceId: 'p_opera', sessionNum: 2, actor: '홍혜란, 김우경', performanceStartAt: '2026-08-09 15:00:00' },
-  { id: 's_opera_3', performanceId: 'p_opera', sessionNum: 3, actor: '조수미, 이용훈', performanceStartAt: '2026-08-16 15:00:00' },
+  { id: 's_opera_1', performanceId: 'p_1000', sessionNum: 1, actor: '조수미, 이용훈', performanceStartAt: '2026-08-05 19:30:00' },
+  { id: 's_opera_2', performanceId: 'p_1000', sessionNum: 2, actor: '홍혜란, 김우경', performanceStartAt: '2026-08-09 15:00:00' },
+  { id: 's_opera_3', performanceId: 'p_1000', sessionNum: 3, actor: '조수미, 이용훈', performanceStartAt: '2026-08-16 15:00:00' },
   // 위키드 (매진)
-  { id: 's_wicked_1', performanceId: 'p_wicked', sessionNum: 1, actor: '옥주현, 정선아', performanceStartAt: '2026-07-25 19:30:00' },
-  { id: 's_wicked_2', performanceId: 'p_wicked', sessionNum: 2, actor: '손승연, 나하나', performanceStartAt: '2026-08-01 14:00:00' },
+  { id: 's_wicked_1', performanceId: 'p_1001', sessionNum: 1, actor: '옥주현, 정선아', performanceStartAt: '2026-07-25 19:30:00' },
+  { id: 's_wicked_2', performanceId: 'p_1001', sessionNum: 2, actor: '손승연, 나하나', performanceStartAt: '2026-08-01 14:00:00' },
   // 블루밍 페스티벌 (오픈 전)
-  { id: 's_concert_1', performanceId: 'p_concert', sessionNum: 1, actor: 'DAY1 라인업', performanceStartAt: '2026-09-12 18:00:00' },
-  { id: 's_concert_2', performanceId: 'p_concert', sessionNum: 2, actor: 'DAY2 라인업', performanceStartAt: '2026-09-13 18:00:00' },
+  { id: 's_concert_1', performanceId: 'p_1002', sessionNum: 1, actor: 'DAY1 라인업', performanceStartAt: '2026-09-12 18:00:00' },
+  { id: 's_concert_2', performanceId: 'p_1002', sessionNum: 2, actor: 'DAY2 라인업', performanceStartAt: '2026-09-13 18:00:00' },
   // 레베카
-  { id: 's_mystery_1', performanceId: 'p_mystery', sessionNum: 1, actor: '신영숙, 민영기', performanceStartAt: '2026-08-20 19:30:00' },
-  { id: 's_mystery_2', performanceId: 'p_mystery', sessionNum: 2, actor: '옥주현, 카이', performanceStartAt: '2026-08-23 14:00:00' },
+  { id: 's_mystery_1', performanceId: 'p_1003', sessionNum: 1, actor: '신영숙, 민영기', performanceStartAt: '2026-08-20 19:30:00' },
+  { id: 's_mystery_2', performanceId: 'p_1003', sessionNum: 2, actor: '옥주현, 카이', performanceStartAt: '2026-08-23 14:00:00' },
   // 그날의 노래 (종료)
-  { id: 's_ballad_1', performanceId: 'p_ballad', sessionNum: 1, actor: '이하나 밴드', performanceStartAt: '2026-06-28 19:00:00' },
+  { id: 's_ballad_1', performanceId: 'p_1004', sessionNum: 1, actor: '이하나 밴드', performanceStartAt: '2026-06-28 19:00:00' },
 ]
 
 export const seedZonePrices: ZonePrice[] = [
   // 라 트라비아타
-  { id: 'zp_opera_vip', performanceId: 'p_opera', zone: 'VIP', price: 190000 },
-  { id: 'zp_opera_r', performanceId: 'p_opera', zone: 'R', price: 150000 },
-  { id: 'zp_opera_s', performanceId: 'p_opera', zone: 'S', price: 110000 },
-  { id: 'zp_opera_a', performanceId: 'p_opera', zone: 'A', price: 70000 },
+  { id: 'zp_opera_vip', performanceId: 'p_1000', zone: 'VIP', price: 190000 },
+  { id: 'zp_opera_r', performanceId: 'p_1000', zone: 'R', price: 150000 },
+  { id: 'zp_opera_s', performanceId: 'p_1000', zone: 'S', price: 110000 },
+  { id: 'zp_opera_a', performanceId: 'p_1000', zone: 'A', price: 70000 },
   // 위키드
-  { id: 'zp_wicked_vip', performanceId: 'p_wicked', zone: 'VIP', price: 170000 },
-  { id: 'zp_wicked_r', performanceId: 'p_wicked', zone: 'R', price: 140000 },
-  { id: 'zp_wicked_s', performanceId: 'p_wicked', zone: 'S', price: 100000 },
-  { id: 'zp_wicked_a', performanceId: 'p_wicked', zone: 'A', price: 70000 },
+  { id: 'zp_wicked_vip', performanceId: 'p_1001', zone: 'VIP', price: 170000 },
+  { id: 'zp_wicked_r', performanceId: 'p_1001', zone: 'R', price: 140000 },
+  { id: 'zp_wicked_s', performanceId: 'p_1001', zone: 'S', price: 100000 },
+  { id: 'zp_wicked_a', performanceId: 'p_1001', zone: 'A', price: 70000 },
   // 블루밍 페스티벌
-  { id: 'zp_concert_vip', performanceId: 'p_concert', zone: 'VIP', price: 165000 },
-  { id: 'zp_concert_r', performanceId: 'p_concert', zone: 'R', price: 132000 },
-  { id: 'zp_concert_s', performanceId: 'p_concert', zone: 'S', price: 99000 },
+  { id: 'zp_concert_vip', performanceId: 'p_1002', zone: 'VIP', price: 165000 },
+  { id: 'zp_concert_r', performanceId: 'p_1002', zone: 'R', price: 132000 },
+  { id: 'zp_concert_s', performanceId: 'p_1002', zone: 'S', price: 99000 },
   // 레베카
-  { id: 'zp_mystery_vip', performanceId: 'p_mystery', zone: 'VIP', price: 160000 },
-  { id: 'zp_mystery_r', performanceId: 'p_mystery', zone: 'R', price: 130000 },
-  { id: 'zp_mystery_s', performanceId: 'p_mystery', zone: 'S', price: 90000 },
-  { id: 'zp_mystery_a', performanceId: 'p_mystery', zone: 'A', price: 60000 },
+  { id: 'zp_mystery_vip', performanceId: 'p_1003', zone: 'VIP', price: 160000 },
+  { id: 'zp_mystery_r', performanceId: 'p_1003', zone: 'R', price: 130000 },
+  { id: 'zp_mystery_s', performanceId: 'p_1003', zone: 'S', price: 90000 },
+  { id: 'zp_mystery_a', performanceId: 'p_1003', zone: 'A', price: 60000 },
   // 그날의 노래
-  { id: 'zp_ballad_r', performanceId: 'p_ballad', zone: 'R', price: 88000 },
-  { id: 'zp_ballad_s', performanceId: 'p_ballad', zone: 'S', price: 66000 },
+  { id: 'zp_ballad_r', performanceId: 'p_1004', zone: 'R', price: 88000 },
+  { id: 'zp_ballad_s', performanceId: 'p_1004', zone: 'S', price: 66000 },
 ]
 
-/** 회차 x 구역 좌석 재고. 매진 공연은 sold === total */
-export const seedInventory: SeatInventory[] = [
-  // 라 트라비아타 - 판매중, 일부 잔여
-  { sessionId: 's_opera_1', zone: 'VIP', total: 60, sold: 58 },
-  { sessionId: 's_opera_1', zone: 'R', total: 120, sold: 110 },
-  { sessionId: 's_opera_1', zone: 'S', total: 200, sold: 150 },
-  { sessionId: 's_opera_1', zone: 'A', total: 300, sold: 120 },
-  { sessionId: 's_opera_2', zone: 'VIP', total: 60, sold: 30 },
-  { sessionId: 's_opera_2', zone: 'R', total: 120, sold: 60 },
-  { sessionId: 's_opera_2', zone: 'S', total: 200, sold: 90 },
-  { sessionId: 's_opera_2', zone: 'A', total: 300, sold: 100 },
-  { sessionId: 's_opera_3', zone: 'VIP', total: 60, sold: 60 },
-  { sessionId: 's_opera_3', zone: 'R', total: 120, sold: 118 },
-  { sessionId: 's_opera_3', zone: 'S', total: 200, sold: 200 },
-  { sessionId: 's_opera_3', zone: 'A', total: 300, sold: 280 },
-  // 위키드 - 전 회차 매진 (s_wicked_1 R석 1장은 취소표 발생 → 우선예매 배정용으로 비워둠)
-  { sessionId: 's_wicked_1', zone: 'VIP', total: 40, sold: 40 },
-  { sessionId: 's_wicked_1', zone: 'R', total: 100, sold: 99 },
-  { sessionId: 's_wicked_1', zone: 'S', total: 180, sold: 180 },
-  { sessionId: 's_wicked_1', zone: 'A', total: 260, sold: 260 },
-  { sessionId: 's_wicked_2', zone: 'VIP', total: 40, sold: 40 },
-  { sessionId: 's_wicked_2', zone: 'R', total: 100, sold: 100 },
-  { sessionId: 's_wicked_2', zone: 'S', total: 180, sold: 180 },
-  { sessionId: 's_wicked_2', zone: 'A', total: 260, sold: 260 },
-  // 블루밍 페스티벌 - 오픈 전 (판매 0)
-  { sessionId: 's_concert_1', zone: 'VIP', total: 150, sold: 0 },
-  { sessionId: 's_concert_1', zone: 'R', total: 400, sold: 0 },
-  { sessionId: 's_concert_1', zone: 'S', total: 700, sold: 0 },
-  { sessionId: 's_concert_2', zone: 'VIP', total: 150, sold: 0 },
-  { sessionId: 's_concert_2', zone: 'R', total: 400, sold: 0 },
-  { sessionId: 's_concert_2', zone: 'S', total: 700, sold: 0 },
-  // 레베카 - 판매중
-  { sessionId: 's_mystery_1', zone: 'VIP', total: 40, sold: 38 },
-  { sessionId: 's_mystery_1', zone: 'R', total: 100, sold: 72 },
-  { sessionId: 's_mystery_1', zone: 'S', total: 180, sold: 90 },
-  { sessionId: 's_mystery_1', zone: 'A', total: 260, sold: 100 },
-  { sessionId: 's_mystery_2', zone: 'VIP', total: 40, sold: 40 },
-  { sessionId: 's_mystery_2', zone: 'R', total: 100, sold: 95 },
-  { sessionId: 's_mystery_2', zone: 'S', total: 180, sold: 130 },
-  { sessionId: 's_mystery_2', zone: 'A', total: 260, sold: 160 },
-  // 그날의 노래 - 종료
-  { sessionId: 's_ballad_1', zone: 'R', total: 100, sold: 100 },
-  { sessionId: 's_ballad_1', zone: 'S', total: 180, sold: 176 },
+/**
+ * booking-dialog.tsx의 좌석 그리드와 동일한 규칙(zone-row-col, 줄 단위 순서)으로
+ * 앞에서부터 count개의 좌석 라벨을 생성한다. 시드 재고의 occupiedSeats를 채우는 데 쓴다.
+ */
+function seatIdsForZone(hall: Hall, zone: Zone, count: number): string[] {
+  const layout = hall.seatLayout[zone] ?? []
+  const ids: string[] = []
+  for (const rowLayout of layout) {
+    for (let col = 1; col <= rowLayout.count; col += 1) {
+      if (ids.length >= count) return ids
+      ids.push(`${zone}-${rowLayout.row}-${col}`)
+    }
+  }
+  return ids
+}
+
+function hallForSession(sessionId: string): Hall | undefined {
+  const session = seedSessions.find((s) => s.id === sessionId)
+  const performance = session && seedPerformances.find((p) => p.id === session.performanceId)
+  return performance ? seedHalls.find((h) => h.id === performance.hallId) : undefined
+}
+
+/**
+ * 회차 x 구역 좌석 재고. 매진 공연은 sold === total.
+ * total은 각 공연의 hallId(h1/h2/h3)에 대응하는 seedHalls[].capacity와 일치해야 함
+ * (실제 performance-service seed 데이터 기준 좌석 수).
+ */
+const seedInventoryCounts: Array<{ sessionId: string; zone: Zone; total: number; sold: number }> = [
+  // 라 트라비아타 (h1: VIP32/R32/S40/A48) - 판매중, 일부 잔여
+  { sessionId: 's_opera_1', zone: 'VIP', total: 32, sold: 31 },
+  { sessionId: 's_opera_1', zone: 'R', total: 32, sold: 29 },
+  { sessionId: 's_opera_1', zone: 'S', total: 40, sold: 30 },
+  { sessionId: 's_opera_1', zone: 'A', total: 48, sold: 19 },
+  { sessionId: 's_opera_2', zone: 'VIP', total: 32, sold: 16 },
+  { sessionId: 's_opera_2', zone: 'R', total: 32, sold: 16 },
+  { sessionId: 's_opera_2', zone: 'S', total: 40, sold: 18 },
+  { sessionId: 's_opera_2', zone: 'A', total: 48, sold: 16 },
+  { sessionId: 's_opera_3', zone: 'VIP', total: 32, sold: 32 },
+  { sessionId: 's_opera_3', zone: 'R', total: 32, sold: 32 },
+  { sessionId: 's_opera_3', zone: 'S', total: 40, sold: 40 },
+  { sessionId: 's_opera_3', zone: 'A', total: 48, sold: 48 },
+  // 위키드 (h2: VIP28/R40/S40/A44) - 전 회차 매진 (s_wicked_1 R석 1장은 취소표 발생 → 우선예매 배정용으로 비워둠)
+  { sessionId: 's_wicked_1', zone: 'VIP', total: 28, sold: 28 },
+  { sessionId: 's_wicked_1', zone: 'R', total: 40, sold: 39 },
+  { sessionId: 's_wicked_1', zone: 'S', total: 40, sold: 40 },
+  { sessionId: 's_wicked_1', zone: 'A', total: 44, sold: 44 },
+  { sessionId: 's_wicked_2', zone: 'VIP', total: 28, sold: 28 },
+  { sessionId: 's_wicked_2', zone: 'R', total: 40, sold: 40 },
+  { sessionId: 's_wicked_2', zone: 'S', total: 40, sold: 40 },
+  { sessionId: 's_wicked_2', zone: 'A', total: 44, sold: 44 },
+  // 블루밍 페스티벌 (h3: VIP32/R40/S36/A44) - 오픈 전 (판매 0)
+  { sessionId: 's_concert_1', zone: 'VIP', total: 32, sold: 0 },
+  { sessionId: 's_concert_1', zone: 'R', total: 40, sold: 0 },
+  { sessionId: 's_concert_1', zone: 'S', total: 36, sold: 0 },
+  { sessionId: 's_concert_2', zone: 'VIP', total: 32, sold: 0 },
+  { sessionId: 's_concert_2', zone: 'R', total: 40, sold: 0 },
+  { sessionId: 's_concert_2', zone: 'S', total: 36, sold: 0 },
+  // 레베카 (h2: VIP28/R40/S40/A44) - 판매중
+  { sessionId: 's_mystery_1', zone: 'VIP', total: 28, sold: 27 },
+  { sessionId: 's_mystery_1', zone: 'R', total: 40, sold: 29 },
+  { sessionId: 's_mystery_1', zone: 'S', total: 40, sold: 20 },
+  { sessionId: 's_mystery_1', zone: 'A', total: 44, sold: 17 },
+  { sessionId: 's_mystery_2', zone: 'VIP', total: 28, sold: 28 },
+  { sessionId: 's_mystery_2', zone: 'R', total: 40, sold: 38 },
+  { sessionId: 's_mystery_2', zone: 'S', total: 40, sold: 29 },
+  { sessionId: 's_mystery_2', zone: 'A', total: 44, sold: 27 },
+  // 그날의 노래 (h2: R40/S40) - 종료
+  { sessionId: 's_ballad_1', zone: 'R', total: 40, sold: 40 },
+  { sessionId: 's_ballad_1', zone: 'S', total: 40, sold: 39 },
 ]
+
+export const seedInventory: SeatInventory[] = seedInventoryCounts.map((entry) => {
+  const hall = hallForSession(entry.sessionId)
+  return {
+    ...entry,
+    occupiedSeats: hall ? seatIdsForZone(hall, entry.zone, entry.sold) : [],
+  }
+})
 
 export const seedOrders: Order[] = [
   {
     id: 'o_1001',
     buyerId: BUYER_ID,
-    performanceId: 'p_opera',
+    performanceId: 'p_1000',
     sessionId: 's_opera_2',
     items: [{ zone: 'R', quantity: 2, unitPrice: 150000, seatLabels: ['R-12', 'R-13'] }],
     totalAmount: 300000,
@@ -249,7 +358,7 @@ export const seedOrders: Order[] = [
   {
     id: 'o_1002',
     buyerId: BUYER_ID,
-    performanceId: 'p_ballad',
+    performanceId: 'p_1004',
     sessionId: 's_ballad_1',
     items: [{ zone: 'S', quantity: 1, unitPrice: 66000, seatLabels: ['S-45'] }],
     totalAmount: 66000,
@@ -280,57 +389,6 @@ export const seedPayments: Payment[] = [
   },
 ]
 
-export const seedWaitlist: WaitlistEntry[] = [
-  // 시나리오: 내 순번이 도착 — R석 취소표가 배정되어 '예매 가능(OFFERED)' 상태.
-  // 상세 → R석 '결제 가능' → 30분 내 결제/결제취소 시나리오 테스트용.
-  {
-    id: 'w_1',
-    buyerId: BUYER_ID,
-    performanceId: 'p_wicked',
-    sessionId: 's_wicked_1',
-    zones: ['VIP', 'R', 'S'],
-    position: 0,
-    status: 'OFFERED',
-    offeredZone: 'R',
-    offeredAt: SEED_OFFER_AT.toISOString(),
-    offerExpiresAt: SEED_OFFER_EXPIRES_AT.toISOString(),
-    createdAt: '2026-05-21 09:00:00',
-  },
-  // 같은 공연(위키드) 2회차에 대한 내 다른 대기 신청.
-  // 1회차 R석 결제가 성공하면 이 신청은 '해당 공연 점유 대기'로 함께 취소된다. (요구사항 5)
-  {
-    id: 'w_1b',
-    buyerId: BUYER_ID,
-    performanceId: 'p_wicked',
-    sessionId: 's_wicked_2',
-    zones: ['VIP', 'R'],
-    position: 1,
-    status: 'WAITING',
-    createdAt: '2026-05-21 09:05:00',
-  },
-  // 뒤이은 대기자들 (순번 시뮬레이션용)
-  {
-    id: 'w_0',
-    buyerId: 'u_other_1',
-    performanceId: 'p_wicked',
-    sessionId: 's_wicked_1',
-    zones: ['VIP'],
-    position: 1,
-    status: 'WAITING',
-    createdAt: '2026-05-20 21:03:00',
-  },
-  {
-    id: 'w_2',
-    buyerId: 'u_other_2',
-    performanceId: 'p_wicked',
-    sessionId: 's_wicked_1',
-    zones: ['S', 'A'],
-    position: 2,
-    status: 'WAITING',
-    createdAt: '2026-05-22 11:20:00',
-  },
-]
-
 export const seedPoints: PointTransaction[] = [
   {
     id: 'pt_1',
@@ -354,7 +412,7 @@ export const seedSettlements: Settlement[] = [
   {
     id: 'st_1',
     sellerId: SELLER_ID,
-    performanceId: 'p_ballad',
+    performanceId: 'p_1004',
     period: '2026-07',
     grossAmount: 11924000,
     platformFee: 596200,
@@ -365,7 +423,7 @@ export const seedSettlements: Settlement[] = [
   {
     id: 'st_2',
     sellerId: SELLER_ID,
-    performanceId: 'p_opera',
+    performanceId: 'p_1000',
     period: '2026-08',
     grossAmount: 42600000,
     platformFee: 2130000,

@@ -17,7 +17,7 @@ export default function PerformanceDetailPage({
   params: Promise<{ id: string }>
 }) {
   const { id } = use(params)
-  const { version } = useApp()
+  const { version, performancesLoaded } = useApp()
 
   const performance = useMemo(() => {
     void version
@@ -25,7 +25,15 @@ export default function PerformanceDetailPage({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id, version])
 
-  if (!performance) return notFound()
+  // 숫자 ID(실제 performance-service 공연)는 앱 시작 시 비동기로 불러오므로,
+  // 그 fetch가 끝나기 전엔 "없는 공연"으로 단정하지 않고 기다린다 — 안 그러면
+  // 직접 URL 진입/새로고침 시 실제로 존재하는 공연도 404로 잘못 처리된다.
+  if (!performance) {
+    if (/^\d+$/.test(id) && !performancesLoaded) {
+      return null
+    }
+    return notFound()
+  }
 
   const hall = api.listHalls().find((h) => h.id === performance.hallId)
 

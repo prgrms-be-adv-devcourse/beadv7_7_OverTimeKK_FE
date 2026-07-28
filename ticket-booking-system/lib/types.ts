@@ -22,12 +22,20 @@ export interface User {
   points: number
 }
 
+/** 구역 내 한 줄(row)의 좌석 배치. count는 해당 줄의 좌석 수(1..count, 빈틈 없음) */
+export interface SeatRowLayout {
+  row: string
+  count: number
+}
+
 export interface Hall {
   id: string
   name: string
   location: string
   /** 구역별 총 좌석 수 */
   capacity: Record<Zone, number>
+  /** 구역별 좌석 배치도 (줄 단위). performance-service seed 데이터 기준 */
+  seatLayout: Record<Zone, SeatRowLayout[]>
 }
 
 export type PerformanceStatus =
@@ -80,6 +88,8 @@ export interface SeatInventory {
   zone: Zone
   total: number
   sold: number
+  /** 실제로 팔린 좌석의 라벨(zone-row-col) 목록. sold와 길이가 항상 같아야 함 */
+  occupiedSeats: string[]
 }
 
 export type OrderStatus =
@@ -125,32 +135,6 @@ export interface Payment {
   approvedAt: string
 }
 
-export type WaitlistStatus =
-  | 'WAITING' // 대기 중
-  | 'OFFERED' // 우선 예매 권한 부여됨 (제한시간 내 결제 필요)
-  | 'PURCHASED' // 구매 완료
-  | 'EXPIRED' // 제한시간 초과로 다음 대기자에게 이전됨
-  | 'CANCELLED' // 대기 취소
-
-export interface WaitlistEntry {
-  id: string
-  buyerId: string
-  performanceId: string
-  sessionId: string
-  /** 신청한 구역 (최대 3개) */
-  zones: Zone[]
-  /** 대기 순번 (1부터). OFFERED/이후 상태에서는 0 */
-  position: number
-  status: WaitlistStatus
-  createdAt: string
-  /** 우선예매 권한 부여 시각 */
-  offeredAt?: string
-  /** 결제 마감 시각 (ISO). 초과 시 다음 대기자에게 이전 */
-  offerExpiresAt?: string
-  /** 실제로 배정된 구역 (취소표가 나온 구역) */
-  offeredZone?: Zone
-}
-
 export type SettlementStatus = 'SCHEDULED' | 'COMPLETED'
 
 export interface Settlement {
@@ -185,5 +169,3 @@ export interface PointTransaction {
 export const PLATFORM_FEE_RATE = 0.05
 /** 공연 종료 다음 날 구매자에게 지급되는 포인트 적립률 */
 export const POINT_EARN_RATE = 0.01
-/** 우선 예매 권한 결제 제한 시간(초) — 취소표 배정 후 30분 내 결제 필요 */
-export const WAITLIST_OFFER_TTL_SECONDS = 1800

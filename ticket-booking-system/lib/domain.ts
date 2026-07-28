@@ -64,7 +64,7 @@ export const ZONE_META: Record<Zone, { label: string; badgeClass: string }> = {
 }
 
 export function canWaitlistZone(performance: Performance, zone: Zone): boolean {
-  if (performance.id === 'p_opera') {
+  if (performance.id === 'p_1000') {
     return zone === 'VIP' || zone === 'S'
   }
   return true

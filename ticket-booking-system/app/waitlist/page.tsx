@@ -1,8 +1,9 @@
 'use client'
 
-import { useMemo, useState } from 'react'
+import { useState } from 'react'
 import { Bell, ExternalLink, CreditCard } from 'lucide-react'
 import Link from 'next/link'
+import { toast } from 'sonner'
 import { useApp } from '@/lib/store'
 import { api } from '@/lib/api'
 import { formatDay, formatTime } from '@/lib/domain'
@@ -17,52 +18,53 @@ import {
   DialogDescription,
 } from '@/components/ui/dialog'
 import { WaitlistPaymentDialog } from '@/components/waitlist-payment-dialog'
+import { useMyStandby, type StandbySummaryEntry } from '@/lib/use-standby'
+import { standbyApi, standbyErrorMessage, STANDBY_USER_ID } from '@/lib/standby-api'
+import { standbyStore } from '@/lib/standby-store'
 import type { Zone } from '@/lib/types'
 
 export default function WaitlistPage() {
-  const { userId, role, version, cancelWaitlist, cancelWaitlistZone } = useApp()
-  void version
-  const [selectedEntryId, setSelectedEntryId] = useState<string | null>(null)
-  const [payingEntryId, setPayingEntryId] = useState<string | null>(null)
+  const { userId, role } = useApp()
+  const { entries, refresh } = useMyStandby(userId, STANDBY_USER_ID)
+  const [selectedStandbyId, setSelectedStandbyId] = useState<number | null>(null)
+  const [payingStandbyId, setPayingStandbyId] = useState<number | null>(null)
 
-  const waitlist = useMemo(() => api.listWaitlist(userId), [userId, version])
-
-  const selectedEntry = selectedEntryId
-    ? waitlist.find((entry) => entry.id === selectedEntryId) ?? null
+  const selectedEntry = selectedStandbyId
+    ? entries.find((e) => e.record.standbyId === selectedStandbyId) ?? null
     : null
-  const selectedPerf = selectedEntry ? api.getPerformance(selectedEntry.performanceId) : undefined
-  const selectedSession = selectedEntry
-    ? api.listSessions(selectedEntry.performanceId).find((s) => s.id === selectedEntry.sessionId)
-    : undefined
 
-  const payingEntry = payingEntryId
-    ? waitlist.find((entry) => entry.id === payingEntryId) ?? null
+  const payingEntry = payingStandbyId
+    ? entries.find((e) => e.record.standbyId === payingStandbyId) ?? null
     : null
-  const payingPerf = payingEntry ? api.getPerformance(payingEntry.performanceId) : undefined
+  const payingZone = payingEntry?.zoneRanks.find((z) => z.isHeld)?.zone
+  const payingPerf = payingEntry ? api.getPerformance(payingEntry.record.performanceId) : undefined
   const payingSession = payingEntry
-    ? api.listSessions(payingEntry.performanceId).find((s) => s.id === payingEntry.sessionId)
+    ? api.listSessions(payingEntry.record.performanceId).find((s) => s.id === payingEntry.record.sessionId)
     : undefined
 
-  function getZonePosition(entry: (typeof waitlist)[number], zone: Zone) {
-    if (entry.status !== 'WAITING') return null
-    const waitingEntries = waitlist
-      .filter((item) => item.sessionId === entry.sessionId && item.status === 'WAITING' && item.zones.includes(zone))
-      .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
-    const index = waitingEntries.findIndex((item) => item.id === entry.id)
-    return index >= 0 ? index + 1 : null
-  }
-
-  function handleCancelZone(entryId: string, zone: Zone) {
+  async function handleCancelAll(entry: StandbySummaryEntry) {
     try {
-      cancelWaitlistZone(entryId, zone)
-    } catch (error) {
-      alert(error instanceof Error ? error.message : '구역별 취소 실패')
+      await standbyApi.cancel(entry.record.standbyId, STANDBY_USER_ID)
+      standbyStore.remove(userId, entry.record.standbyId)
+      refresh()
+    } catch (e) {
+      toast.error(standbyErrorMessage(e, '대기 취소에 실패했습니다.'))
     }
   }
 
-  function openPayment(entryId: string) {
-    setSelectedEntryId(null)
-    setPayingEntryId(entryId)
+  async function handleCancelZone(entry: StandbySummaryEntry, zone: Zone) {
+    try {
+      await standbyApi.cancelZone(entry.record.standbyId, zone, STANDBY_USER_ID)
+      standbyStore.removeZone(userId, entry.record.standbyId, zone)
+      refresh()
+    } catch (e) {
+      toast.error(standbyErrorMessage(e, '구역별 취소에 실패했습니다.'))
+    }
+  }
+
+  function openPayment(standbyId: number) {
+    setSelectedStandbyId(null)
+    setPayingStandbyId(standbyId)
   }
 
   if (role !== 'BUYER') {
@@ -92,18 +94,22 @@ export default function WaitlistPage() {
 
       <div className="space-y-3">
         <h2 className="text-lg font-semibold">대기 내역</h2>
-        {waitlist.length === 0 ? (
+        {entries.length === 0 ? (
           <div className="rounded-xl border border-dashed border-border p-8 text-center text-sm text-muted-foreground">
             대기 신청 이력이 없습니다.
           </div>
         ) : (
-          waitlist.map((entry) => {
-            const perf = api.getPerformance(entry.performanceId)
-            const session = api.listSessions(entry.performanceId).find((s) => s.id === entry.sessionId)
-            const isOffered = entry.status === 'OFFERED'
+          entries.map((entry) => {
+            const { record, zoneRanks } = entry
+            const perf = api.getPerformance(record.performanceId)
+            const session = api
+              .listSessions(record.performanceId)
+              .find((s) => s.id === record.sessionId)
+            const heldZone = zoneRanks.find((z) => z.isHeld)?.zone
+            const isOffered = heldZone != null
             return (
               <div
-                key={entry.id}
+                key={record.standbyId}
                 className={cn(
                   'rounded-xl border bg-card p-4',
                   isOffered ? 'border-warning/40 bg-warning/5' : 'border-border',
@@ -113,40 +119,36 @@ export default function WaitlistPage() {
                   <div className="space-y-2">
                     <div className="flex flex-wrap items-center gap-2">
                       <p className="font-semibold">{perf?.title}</p>
-                      <WaitlistStatusBadge status={entry.status} />
+                      <WaitlistStatusBadge status={isOffered ? 'HELD' : 'WAITING'} />
                     </div>
                     <p className="text-sm text-muted-foreground">
                       {session ? `${session.sessionNum}회차 · ${formatDay(session.performanceStartAt)} ${formatTime(session.performanceStartAt)}` : ''}
                     </p>
                     <div className="flex flex-wrap items-center gap-4 text-sm text-muted-foreground">
-                      <span>신청 구역: {entry.zones.join(', ')}</span>
-                      {isOffered ? (
-                        <span className="font-medium text-warning">우선예매 구역: {entry.offeredZone}</span>
-                      ) : (
-                        entry.position > 0 && <span>대기순번: {entry.position}</span>
+                      <span>신청 구역: {record.zones.join(', ')}</span>
+                      {isOffered && (
+                        <span className="font-medium text-warning">우선예매 구역: {heldZone}</span>
                       )}
                     </div>
                   </div>
                   <div className="flex items-center gap-2">
                     {isOffered && (
-                      <Button size="sm" onClick={() => openPayment(entry.id)}>
+                      <Button size="sm" onClick={() => openPayment(record.standbyId)}>
                         <CreditCard className="mr-1 size-3.5" />결제하기
                       </Button>
                     )}
-                    <Button size="sm" variant="ghost" onClick={() => setSelectedEntryId(entry.id)}>
+                    <Button size="sm" variant="ghost" onClick={() => setSelectedStandbyId(record.standbyId)}>
                       상세
                     </Button>
                     <Link
-                      href={`/performances/${entry.performanceId}`}
+                      href={`/performances/${record.performanceId}`}
                       className={cn(buttonVariants({ size: 'sm', variant: 'outline' }))}
                     >
                       <ExternalLink className="mr-1 size-3.5" />공연 보기
                     </Link>
-                    {entry.status === 'WAITING' && (
-                      <Button size="sm" variant="ghost" onClick={() => cancelWaitlist(entry.id)}>
-                        취소
-                      </Button>
-                    )}
+                    <Button size="sm" variant="ghost" onClick={() => handleCancelAll(entry)}>
+                      취소
+                    </Button>
                   </div>
                 </div>
               </div>
@@ -155,76 +157,92 @@ export default function WaitlistPage() {
         )}
       </div>
 
-      <Dialog open={selectedEntry != null} onOpenChange={(v) => !v && setSelectedEntryId(null)}>
+      <Dialog open={selectedEntry != null} onOpenChange={(v) => !v && setSelectedStandbyId(null)}>
         <DialogContent className="max-w-md">
           {selectedEntry && (
             <>
-              <DialogHeader>
-                <DialogTitle className="flex items-center gap-2">
-                  <Bell className="size-5 text-primary" />
-                  대기 상세
-                </DialogTitle>
-                <DialogDescription>
-                  {selectedPerf?.title ?? '-'}
-                  {selectedSession
-                    ? ` · ${selectedSession.sessionNum}회차 ${formatDay(selectedSession.performanceStartAt)} ${formatTime(selectedSession.performanceStartAt)}`
-                    : ''}
-                </DialogDescription>
-              </DialogHeader>
+              {(() => {
+                const perf = api.getPerformance(selectedEntry.record.performanceId)
+                const session = api
+                  .listSessions(selectedEntry.record.performanceId)
+                  .find((s) => s.id === selectedEntry.record.sessionId)
+                const heldZone = selectedEntry.zoneRanks.find((z) => z.isHeld)?.zone
+                return (
+                  <>
+                    <DialogHeader>
+                      <DialogTitle className="flex items-center gap-2">
+                        <Bell className="size-5 text-primary" />
+                        대기 상세
+                      </DialogTitle>
+                      <DialogDescription>
+                        {perf?.title ?? '-'}
+                        {session
+                          ? ` · ${session.sessionNum}회차 ${formatDay(session.performanceStartAt)} ${formatTime(session.performanceStartAt)}`
+                          : ''}
+                      </DialogDescription>
+                    </DialogHeader>
 
-              <div className="flex items-center justify-between text-sm">
-                <span className="font-medium">대기 상태</span>
-                <WaitlistStatusBadge status={selectedEntry.status} />
-              </div>
-
-              <div className="space-y-2 rounded-lg border border-border bg-secondary/20 p-3">
-                {selectedEntry.zones.map((zone) => {
-                  const isOfferedZone = selectedEntry.status === 'OFFERED' && selectedEntry.offeredZone === zone
-                  const position = getZonePosition(selectedEntry, zone)
-                  return (
-                    <div key={zone} className="flex items-center justify-between gap-2">
-                      <div className="flex items-center gap-2">
-                        <ZoneBadge zone={zone} />
-                        <span
-                          className={cn(
-                            'text-xs',
-                            isOfferedZone ? 'font-medium text-warning' : 'text-muted-foreground',
-                          )}
-                        >
-                          {isOfferedZone
-                            ? '결제 가능'
-                            : position
-                              ? `${position}번째 대기`
-                              : selectedEntry.status === 'WAITING'
-                                ? '대기 순번 확인 불가'
-                                : '대기 중'}
-                        </span>
-                      </div>
-                      {isOfferedZone ? (
-                        <Button size="sm" onClick={() => openPayment(selectedEntry.id)}>
-                          <CreditCard className="mr-1 size-3.5" />결제하기
-                        </Button>
-                      ) : selectedEntry.status === 'WAITING' ? (
-                        <Button size="sm" variant="ghost" onClick={() => handleCancelZone(selectedEntry.id, zone)}>
-                          구역 취소
-                        </Button>
-                      ) : null}
+                    <div className="flex items-center justify-between text-sm">
+                      <span className="font-medium">대기 상태</span>
+                      <WaitlistStatusBadge status={heldZone ? 'HELD' : 'WAITING'} />
                     </div>
-                  )
-                })}
-              </div>
+
+                    <div className="space-y-2 rounded-lg border border-border bg-secondary/20 p-3">
+                      {selectedEntry.record.zones.map((zone) => {
+                        const zoneRank = selectedEntry.zoneRanks.find((z) => z.zone === zone)
+                        const isOfferedZone = zoneRank?.isHeld ?? false
+                        return (
+                          <div key={zone} className="flex items-center justify-between gap-2">
+                            <div className="flex items-center gap-2">
+                              <ZoneBadge zone={zone} />
+                              <span
+                                className={cn(
+                                  'text-xs',
+                                  isOfferedZone ? 'font-medium text-warning' : 'text-muted-foreground',
+                                )}
+                              >
+                                {isOfferedZone
+                                  ? '결제 가능'
+                                  : zoneRank
+                                    ? `${zoneRank.rank}번째 대기`
+                                    : '대기 순번 확인 불가'}
+                              </span>
+                            </div>
+                            {isOfferedZone ? (
+                              <Button size="sm" onClick={() => openPayment(selectedEntry.record.standbyId)}>
+                                <CreditCard className="mr-1 size-3.5" />결제하기
+                              </Button>
+                            ) : (
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                onClick={() => handleCancelZone(selectedEntry, zone)}
+                              >
+                                구역 취소
+                              </Button>
+                            )}
+                          </div>
+                        )
+                      })}
+                    </div>
+                  </>
+                )
+              })()}
             </>
           )}
         </DialogContent>
       </Dialog>
 
-      {payingEntry && payingPerf && payingSession && (
+      {payingEntry && payingZone && payingPerf && payingSession && (
         <WaitlistPaymentDialog
           open={payingEntry != null}
-          onOpenChange={(v) => !v && setPayingEntryId(null)}
-          entry={payingEntry}
+          onOpenChange={(v) => !v && setPayingStandbyId(null)}
+          standbyId={payingEntry.record.standbyId}
+          zone={payingZone}
+          heldSince={payingEntry.record.heldSince}
           performance={payingPerf}
           session={payingSession}
+          onSettled={refresh}
         />
       )}
     </div>

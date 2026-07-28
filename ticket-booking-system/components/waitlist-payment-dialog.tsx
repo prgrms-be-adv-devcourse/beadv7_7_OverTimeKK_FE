@@ -19,15 +19,22 @@ import { TossPayment } from '@/components/toss-payment'
 import { useApp } from '@/lib/store'
 import { api } from '@/lib/api'
 import { formatKRW, formatDay, formatTime } from '@/lib/domain'
-import type { Performance, PerformanceSession, WaitlistEntry } from '@/lib/types'
+import type { Performance, PerformanceSession, Zone } from '@/lib/types'
+import { standbyApi, standbyErrorMessage, STANDBY_OFFER_TTL_SECONDS, STANDBY_USER_ID } from '@/lib/standby-api'
+import { standbyStore } from '@/lib/standby-store'
 
 /** 대기순번 매칭으로 배정된 비지정석은 좌석 선택 단계가 없어 2단계(가격 선택 → 결제)로 시작 */
 const STEP_LABELS = ['가격 선택', '결제']
 
-/** 남은 시간을 실시간(절대 만료시각 기준)으로 계산 — 창을 닫았다 열어도 시간은 계속 흐른다. */
-function remainingSeconds(expiresAt?: string): number {
-  if (!expiresAt) return 0
-  return Math.max(0, Math.floor((new Date(expiresAt).getTime() - Date.now()) / 1000))
+/**
+ * 남은 시간을 실시간(절대 만료시각 기준)으로 계산 — 창을 닫았다 열어도 시간은 계속 흐른다.
+ * 백엔드 조회 API는 결제 만료시각을 내려주지 않는다(ticket 도메인 소관, 문서 범위 밖) —
+ * 그래서 프론트가 매칭(isHeld) 감지 시각을 로컬에 기록해두고 여기서 30분을 더해 근사 계산한다.
+ */
+function remainingSeconds(heldSince?: string): number {
+  if (!heldSince) return STANDBY_OFFER_TTL_SECONDS
+  const expiresAt = new Date(heldSince).getTime() + STANDBY_OFFER_TTL_SECONDS * 1000
+  return Math.max(0, Math.floor((expiresAt - Date.now()) / 1000))
 }
 
 function formatCountdown(totalSeconds: number): string {
@@ -39,36 +46,39 @@ function formatCountdown(totalSeconds: number): string {
 export function WaitlistPaymentDialog({
   open,
   onOpenChange,
-  entry,
+  standbyId,
+  zone,
+  heldSince,
   performance,
   session,
+  onSettled,
 }: {
   open: boolean
   onOpenChange: (v: boolean) => void
-  entry: WaitlistEntry
+  standbyId: number
+  zone: Zone
+  heldSince?: string
   performance: Performance
   session: PerformanceSession
+  onSettled: () => void
 }) {
-  const { acceptWaitlistOffer, cancelWaitlistOffer, points } = useApp()
-  const [remaining, setRemaining] = useState(() => remainingSeconds(entry.offerExpiresAt))
+  const { userId, createOrder, points } = useApp()
+  const [remaining, setRemaining] = useState(() => remainingSeconds(heldSince))
   const [processing, setProcessing] = useState(false)
   const [step, setStep] = useState<'price' | 'pay'>('price')
   const [pointsInput, setPointsInput] = useState('0')
 
-  // 절대 만료시각 기준으로 1초마다 남은 시간 재계산
+  // 절대 만료시각(근사치) 기준으로 1초마다 남은 시간 재계산
   useEffect(() => {
-    setRemaining(remainingSeconds(entry.offerExpiresAt))
+    setRemaining(remainingSeconds(heldSince))
     const timer = setInterval(() => {
-      setRemaining(remainingSeconds(entry.offerExpiresAt))
+      setRemaining(remainingSeconds(heldSince))
     }, 1000)
     return () => clearInterval(timer)
-  }, [entry.offerExpiresAt])
+  }, [heldSince])
 
   const expired = remaining <= 0
-  const zone = entry.offeredZone
-  const price = zone
-    ? api.listZonePrices(performance.id).find((p) => p.zone === zone)?.price ?? 0
-    : 0
+  const price = api.listZonePrices(performance.id).find((p) => p.zone === zone)?.price ?? 0
 
   const maxUsablePoints = Math.max(0, Math.min(points, price))
   const pointsUsed = Math.max(0, Math.min(Number(pointsInput) || 0, maxUsablePoints))
@@ -87,11 +97,23 @@ export function WaitlistPaymentDialog({
     }
     setProcessing(true)
     try {
-      acceptWaitlistOffer(entry.id, method, pointsUsed)
+      // 실제 결제/발권 API는 ticket·order 도메인 소관이라 이 가이드 범위 밖 —
+      // 지금은 프론트 mock 주문 생성 로직을 그대로 재사용한다.
+      createOrder({
+        buyerId: userId,
+        performanceId: performance.id,
+        sessionId: session.id,
+        selections: [{ zone, quantity: 1 }],
+        method,
+        fromWaitlist: true,
+        pointsUsed,
+      })
+      standbyStore.remove(userId, standbyId)
       toast.success('결제가 완료되었습니다.', {
         description: '우선 예매가 확정되어 발권되었습니다.',
       })
       onOpenChange(false)
+      onSettled()
     } catch (e) {
       toast.error(e instanceof Error ? e.message : '결제에 실패했습니다.')
     } finally {
@@ -99,16 +121,18 @@ export function WaitlistPaymentDialog({
     }
   }
 
-  function handleCancel() {
+  async function handleCancel() {
     setProcessing(true)
     try {
-      cancelWaitlistOffer(entry.id)
+      await standbyApi.cancelZone(standbyId, zone, STANDBY_USER_ID)
+      standbyStore.removeZone(userId, standbyId, zone)
       toast.info('우선 예매를 취소했습니다.', {
         description: '대기열에서 취소 처리되었습니다.',
       })
       onOpenChange(false)
+      onSettled()
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : '취소에 실패했습니다.')
+      toast.error(standbyErrorMessage(e, '취소에 실패했습니다.'))
     } finally {
       setProcessing(false)
     }
@@ -158,7 +182,7 @@ export function WaitlistPaymentDialog({
             <div className="space-y-2 rounded-lg border border-border bg-secondary/20 p-3 text-sm">
               <div className="flex items-center justify-between">
                 <span className="text-muted-foreground">배정 구역</span>
-                {zone && <ZoneBadge zone={zone} />}
+                <ZoneBadge zone={zone} />
               </div>
               <div className="flex items-center justify-between">
                 <span className="text-muted-foreground">수량</span>

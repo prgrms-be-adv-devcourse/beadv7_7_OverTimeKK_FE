@@ -6,6 +6,8 @@ import { Plus, Pencil, Trash2, DollarSign, Users, Minus } from 'lucide-react'
 import { useApp } from '@/lib/store'
 import { api } from '@/lib/api'
 import { formatKRW } from '@/lib/domain'
+import { performanceApi, PerformanceApiError } from '@/lib/performance-api'
+import { HALL_OPTIONS, registerPerformanceExtras } from '@/lib/performance-extras'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
@@ -17,14 +19,13 @@ export default function SellerPage() {
   const {
     role,
     version,
+    refresh,
     sellerCancelPerformance,
-    createPerformance,
     updatePerformance,
     deletePerformance,
-    createSession,
-    setZonePrices,
   } = useApp()
   void version
+  const [submitting, setSubmitting] = useState(false)
 
   const performances = useMemo(() => {
     const all = api.listPerformances()
@@ -81,7 +82,9 @@ export default function SellerPage() {
     setPriceRows((prev) => (prev.length > 1 ? prev.filter((item) => item.id !== id) : prev))
   }
 
-  function handleCreatePerformance() {
+  // 실제 performance-service(v2 등록 API)로 공연을 등록한다.
+  // 좌석 배치도 데이터가 있는 3개 공연장(HALL_OPTIONS)만 지원 — lib/performance-extras.ts 참고.
+  async function handleCreatePerformance() {
     if (!form.title.trim()) {
       alert('공연 제목을 입력해 주세요.')
       return
@@ -92,49 +95,70 @@ export default function SellerPage() {
       return
     }
 
-    const performance = createPerformance({
-      sellerId: api.getUser('u_seller')?.id ?? 'u_seller',
-      title: form.title,
-      description: form.description,
-      runtime: Number(form.runtime),
-      startDate: form.startDate,
-      endDate: form.endDate,
-      ticketOpenAt: form.ticketOpenAt,
-      hallId: form.hallId,
-      posterUrl: form.posterUrl,
-      category: form.category,
-    })
-
-    sessions.forEach((session) => {
-      createSession(performance.id, {
-        sessionNum: Number(session.sessionNum) || 1,
-        actor: session.actor,
-        performanceStartAt: session.performanceStartAt,
-      })
-    })
-
     const prices = priceRows
       .filter((row) => row.zone && row.price && Number(row.price) > 0)
       .map((row) => ({ zone: row.zone as Zone, price: Number(row.price) }))
 
-    if (prices.length > 0) {
-      setZonePrices(performance.id, prices)
+    if (prices.length === 0) {
+      alert('좌석 구역과 가격을 최소 1개 이상 입력해 주세요.')
+      return
     }
 
-    setDraftMode(false)
-    setForm({
-      title: '',
-      description: '',
-      runtime: '120',
-      startDate: '2026-08-01',
-      endDate: '2026-08-02',
-      ticketOpenAt: '2026-07-21 12:00:00',
-      hallId: 'h1',
-      posterUrl: '/posters/placeholder.png',
-      category: '콘서트',
-    })
-    setSessions([{ sessionNum: '1', actor: '', performanceStartAt: '2026-08-01 19:00:00' }])
-    setPriceRows([{ id: 1, zone: 'VIP', price: '' }])
+    const hallOption = HALL_OPTIONS.find((h) => h.localHallId === form.hallId) ?? HALL_OPTIONS[0]
+
+    setSubmitting(true)
+    try {
+      await performanceApi.register({
+        title: form.title,
+        description: form.description,
+        runtime: Number(form.runtime),
+        startDate: form.startDate,
+        endDate: form.endDate,
+        ticketOpenAt: form.ticketOpenAt,
+        hallId: hallOption.backendHallId,
+        sessions: sessions.map((session) => ({
+          sessionNum: Number(session.sessionNum) || 1,
+          actor: session.actor,
+          performanceStartAt: session.performanceStartAt,
+        })),
+        seatPrices: prices.map((p) => ({ zone: p.zone, price: p.price })),
+      })
+
+      // 등록 응답엔 performanceId가 안 내려오므로, title로 목록을 다시 조회해서 찾는다.
+      const list = await performanceApi.list()
+      const created = [...list].reverse().find((p) => p.title === form.title)
+      if (created) {
+        const realSessions = await performanceApi.sessions(created.performanceId).catch(() => [])
+        registerPerformanceExtras(form.title, {
+          posterUrl: form.posterUrl,
+          category: form.category,
+          hallId: hallOption.localHallId,
+          zonePrices: Object.fromEntries(prices.map((p) => [p.zone, p.price])),
+        })
+        api.importRealPerformances([{ real: created, sessions: realSessions }])
+        refresh()
+      }
+
+      setDraftMode(false)
+      setForm({
+        title: '',
+        description: '',
+        runtime: '120',
+        startDate: '2026-08-01',
+        endDate: '2026-08-02',
+        ticketOpenAt: '2026-07-21 12:00:00',
+        hallId: 'h1',
+        posterUrl: '/posters/placeholder.png',
+        category: '콘서트',
+      })
+      setSessions([{ sessionNum: '1', actor: '', performanceStartAt: '2026-08-01 19:00:00' }])
+      setPriceRows([{ id: 1, zone: 'VIP', price: '' }])
+    } catch (e) {
+      const message = e instanceof PerformanceApiError ? e.message : '공연 등록에 실패했습니다. 백엔드 서버 상태를 확인해 주세요.'
+      alert(message)
+    } finally {
+      setSubmitting(false)
+    }
   }
 
   if (role !== 'SELLER') {
@@ -175,7 +199,18 @@ export default function SellerPage() {
               <Input placeholder="공연 제목" value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} />
               <Input placeholder="카테고리" value={form.category} onChange={(e) => setForm({ ...form, category: e.target.value })} />
               <Input placeholder="러닝타임(분)" type="number" value={form.runtime} onChange={(e) => setForm({ ...form, runtime: e.target.value })} />
-              <Input placeholder="공연장 ID" value={form.hallId} onChange={(e) => setForm({ ...form, hallId: e.target.value })} />
+              <Select value={form.hallId} onValueChange={(value) => value && setForm({ ...form, hallId: value })}>
+                <SelectTrigger className="w-full">
+                  <SelectValue placeholder="공연장 선택" />
+                </SelectTrigger>
+                <SelectContent>
+                  {HALL_OPTIONS.map((hall) => (
+                    <SelectItem key={hall.localHallId} value={hall.localHallId}>
+                      {hall.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
               <Input type="date" value={form.startDate} onChange={(e) => setForm({ ...form, startDate: e.target.value })} />
               <Input type="date" value={form.endDate} onChange={(e) => setForm({ ...form, endDate: e.target.value })} />
               <Input placeholder="티켓 오픈 yyyy-MM-dd HH:mm:ss" value={form.ticketOpenAt} onChange={(e) => setForm({ ...form, ticketOpenAt: e.target.value })} />
@@ -291,8 +326,8 @@ export default function SellerPage() {
             </div>
           </div>
 
-          <Button type="button" onClick={handleCreatePerformance}>
-            공연 등록
+          <Button type="button" onClick={handleCreatePerformance} disabled={submitting}>
+            {submitting ? '등록 중...' : '공연 등록'}
           </Button>
         </div>
       )}

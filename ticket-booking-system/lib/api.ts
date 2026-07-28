@@ -7,6 +7,7 @@
  */
 
 import {
+  SELLER_ID,
   seedHalls,
   seedInventory,
   seedOrders,
@@ -16,14 +17,15 @@ import {
   seedSessions,
   seedSettlements,
   seedUsers,
-  seedWaitlist,
   seedZonePrices,
   seatLabelFor,
 } from './mock-data'
 import { computeRefund, NOW, parseDateTime } from './domain'
+import { getPerformanceExtras } from './performance-extras'
+import type { RealPerformance, RealSession } from './performance-api'
 import {
   PLATFORM_FEE_RATE,
-  WAITLIST_OFFER_TTL_SECONDS,
+  ZONES,
   type Hall,
   type Order,
   type Payment,
@@ -33,7 +35,6 @@ import {
   type SeatInventory,
   type Settlement,
   type User,
-  type WaitlistEntry,
   type Zone,
   type ZonePrice,
 } from './types'
@@ -61,7 +62,6 @@ const db = {
   inventory: clone(seedInventory) as SeatInventory[],
   orders: clone(seedOrders) as Order[],
   payments: clone(seedPayments) as Payment[],
-  waitlist: clone(seedWaitlist) as WaitlistEntry[],
   points: clone(seedPoints) as PointTransaction[],
   settlements: clone(seedSettlements) as Settlement[],
 }
@@ -97,6 +97,69 @@ export const api = {
   // GET /api/halls
   listHalls(): Hall[] {
     return clone(db.halls)
+  },
+
+  // GET /api/halls/{id}
+  getHall(id: string): Hall | undefined {
+    return clone(db.halls.find((h) => h.id === id))
+  },
+
+  /**
+   * performance-service에서 실제로 받아온 공연+회차를 mock db에 병합한다.
+   * 좌석 등급/가격/잔여석/포스터/카테고리는 lib/performance-extras.ts의 정적 데이터로 채운다
+   * (백엔드에 조회 API가 없음). 이미 반영된 performanceId는 건너뛴다(중복 호출 안전).
+   */
+  importRealPerformances(items: { real: RealPerformance; sessions: RealSession[] }[]): void {
+    for (const { real, sessions } of items) {
+      const id = String(real.performanceId)
+      if (db.performances.some((p) => p.id === id)) continue
+
+      const extras = getPerformanceExtras(real.title)
+      const hall = db.halls.find((h) => h.id === extras.hallId)
+
+      db.performances.push({
+        id,
+        sellerId: SELLER_ID,
+        title: real.title,
+        description: real.description,
+        runtime: real.runtime,
+        startDate: real.startDate,
+        endDate: real.endDate,
+        ticketOpenAt: real.ticketOpenAt,
+        hallId: extras.hallId,
+        posterUrl: extras.posterUrl,
+        category: extras.category,
+        status: 'ON_SALE',
+      })
+
+      for (const zone of ZONES) {
+        const price = extras.zonePrices[zone]
+        if (price == null) continue
+        db.zonePrices.push({ id: nextId('zp'), performanceId: id, zone, price })
+      }
+
+      for (const s of sessions) {
+        const sessionId = `${id}-${s.sessionNum}`
+        db.sessions.push({
+          id: sessionId,
+          performanceId: id,
+          sessionNum: s.sessionNum,
+          actor: s.actor,
+          performanceStartAt: s.performanceStartAt,
+        })
+        for (const zone of ZONES) {
+          const price = extras.zonePrices[zone]
+          if (price == null) continue
+          db.inventory.push({
+            sessionId,
+            zone,
+            total: hall ? hall.capacity[zone] : 100,
+            sold: 0,
+            occupiedSeats: [],
+          })
+        }
+      }
+    }
   },
 
   // GET /api/performances
@@ -172,20 +235,6 @@ export const api = {
   listSellerPayments(sellerId: string): Payment[] {
     const orderIds = this.listSellerOrders(sellerId).map((o) => o.id)
     return clone(db.payments.filter((p) => orderIds.includes(p.orderId)))
-  },
-
-  // GET /api/buyers/{id}/waitlist
-  listWaitlist(buyerId: string): WaitlistEntry[] {
-    return clone(
-      db.waitlist
-        .filter((w) => w.buyerId === buyerId)
-        .sort((a, b) => b.createdAt.localeCompare(a.createdAt)),
-    )
-  },
-
-  // GET /api/sessions/{id}/waitlist (전체 대기열)
-  listSessionWaitlist(sessionId: string): WaitlistEntry[] {
-    return clone(db.waitlist.filter((w) => w.sessionId === sessionId))
   },
 
   // GET /api/users/{id}/points
@@ -265,6 +314,7 @@ export const api = {
         zone: price.zone,
         total: hall ? hall.capacity[price.zone] : 100,
         sold: 0,
+        occupiedSeats: [],
       })
     }
     return clone(session)
@@ -326,6 +376,7 @@ export const api = {
       const seatLabels: string[] = []
       for (let k = 0; k < s.seatLabels.length; k++) {
         inv.sold += 1
+        inv.occupiedSeats.push(s.seatLabels[k])
         seatLabels.push(s.seatLabels[k])
       }
       return { zone: s.zone, quantity: s.seatLabels.length, unitPrice: price.price, seatLabels }
@@ -401,12 +452,12 @@ export const api = {
       payment.status = refundAmount === order.totalAmount ? 'CANCELLED' : 'PARTIAL_CANCELLED'
     }
 
-    // 좌석 재고 반환 + 대기열에 취소표 알림
+    // 좌석 재고 반환. 취소표 대기열 매칭은 이제 실제 standby 백엔드가 처리한다 (mock에서는 다루지 않음).
     for (const item of order.items) {
       const inv = db.inventory.find((i) => i.sessionId === order.sessionId && i.zone === item.zone)
-      if (inv) inv.sold = Math.max(0, inv.sold - item.quantity)
-      for (let k = 0; k < item.quantity; k++) {
-        offerToNextWaiter(order.sessionId, item.zone)
+      if (inv) {
+        inv.sold = Math.max(0, inv.sold - item.quantity)
+        inv.occupiedSeats = inv.occupiedSeats.filter((label) => !item.seatLabels.includes(label))
       }
     }
     refreshSoldOut(order.performanceId)
@@ -445,152 +496,7 @@ export const api = {
         refundedOrders += 1
       }
     }
-    // 대기열 전체 취소
-    for (const w of db.waitlist) {
-      if (sessionIds.includes(w.sessionId) && (w.status === 'WAITING' || w.status === 'OFFERED')) {
-        w.status = 'CANCELLED'
-      }
-    }
     return { refundedOrders }
-  },
-
-  // ----------------------------------------------------------------
-  // 취소표 대기열
-  // ----------------------------------------------------------------
-
-  // POST /api/sessions/{id}/waitlist
-  joinWaitlist(input: {
-    buyerId: string
-    performanceId: string
-    sessionId: string
-    zones: Zone[]
-  }): WaitlistEntry {
-    if (input.zones.length === 0 || input.zones.length > 3) {
-      throw new Error('대기 구역은 1~3개까지 선택할 수 있습니다.')
-    }
-    const exists = db.waitlist.find(
-      (w) =>
-        w.buyerId === input.buyerId &&
-        w.sessionId === input.sessionId &&
-        (w.status === 'WAITING' || w.status === 'OFFERED'),
-    )
-    if (exists) throw new Error('이미 해당 회차에 대기 중입니다.')
-
-    const maxPos = db.waitlist
-      .filter((w) => w.sessionId === input.sessionId && w.status === 'WAITING')
-      .reduce((m, w) => Math.max(m, w.position), 0)
-
-    const entry: WaitlistEntry = {
-      id: nextId('w'),
-      buyerId: input.buyerId,
-      performanceId: input.performanceId,
-      sessionId: input.sessionId,
-      zones: input.zones,
-      position: maxPos + 1,
-      status: 'WAITING',
-      createdAt: formatNow(),
-    }
-    db.waitlist.push(entry)
-    return clone(entry)
-  },
-
-  // DELETE /api/waitlist/{id}
-  cancelWaitlist(entryId: string): void {
-    const entry = db.waitlist.find((w) => w.id === entryId)
-    if (!entry) return
-    entry.status = 'CANCELLED'
-    entry.position = 0
-    recomputePositions(entry.sessionId)
-  },
-
-  cancelWaitlistZone(entryId: string, zone: Zone): WaitlistEntry {
-    const entry = db.waitlist.find((w) => w.id === entryId)
-    if (!entry) throw new Error('대기 정보를 찾을 수 없습니다.')
-    if (entry.status !== 'WAITING') throw new Error('대기 중인 신청만 구역별로 취소할 수 있습니다.')
-    entry.zones = entry.zones.filter((z) => z !== zone)
-    if (entry.zones.length === 0) {
-      entry.status = 'CANCELLED'
-      entry.position = 0
-    } else {
-      recomputePositions(entry.sessionId)
-    }
-    return clone(entry)
-  },
-
-  // POST /api/admin/sessions/{id}/simulate-cancel  (데모: 취소표 1장 발생)
-  simulateCancellation(sessionId: string, zone: Zone): WaitlistEntry | null {
-    const offered = offerToNextWaiter(sessionId, zone)
-    return offered ? clone(offered) : null
-  },
-
-  // POST /api/waitlist/{id}/accept  (우선예매 결제 → 발권)
-  acceptWaitlistOffer(entryId: string, method?: string, pointsUsed?: number): { order: Order; payment: Payment } {
-    const entry = db.waitlist.find((w) => w.id === entryId)
-    if (!entry) throw new Error('대기 정보를 찾을 수 없습니다.')
-    if (entry.status !== 'OFFERED') throw new Error('예매 가능한 상태가 아닙니다.')
-    if (entry.offerExpiresAt && new Date(entry.offerExpiresAt).getTime() < Date.now()) {
-      throw new Error('결제 제한 시간이 지났습니다.')
-    }
-    const zone = entry.offeredZone!
-    const result = this.createOrder({
-      buyerId: entry.buyerId,
-      performanceId: entry.performanceId,
-      sessionId: entry.sessionId,
-      selections: [{ zone, quantity: 1 }],
-      method,
-      fromWaitlist: true,
-      pointsUsed,
-    })
-    entry.status = 'PURCHASED'
-    entry.position = 0
-    // 같은 구역을 기다리던 다른 대기자는 취소표가 소진되었으므로 대기 종료
-    db.waitlist
-      .filter((w) => w.id !== entry.id && w.sessionId === entry.sessionId && w.status === 'WAITING' && w.zones.includes(zone))
-      .forEach((w) => {
-        w.status = 'EXPIRED'
-        w.position = 0
-      })
-    // 결제 성공 → 이 구매자가 해당 공연에 점유하던 다른 대기 신청은 모두 취소
-    db.waitlist
-      .filter(
-        (w) =>
-          w.id !== entry.id &&
-          w.buyerId === entry.buyerId &&
-          w.performanceId === entry.performanceId &&
-          (w.status === 'WAITING' || w.status === 'OFFERED'),
-      )
-      .forEach((w) => {
-        w.status = 'CANCELLED'
-        w.position = 0
-      })
-    recomputePositions(entry.sessionId)
-    return result
-  },
-
-  // POST /api/waitlist/{id}/cancel-offer  (우선예매 결제 취소 → 대기열 취소, 취소표는 다음 대기자에게)
-  cancelWaitlistOffer(entryId: string): WaitlistEntry | null {
-    const entry = db.waitlist.find((w) => w.id === entryId)
-    if (!entry) throw new Error('대기 정보를 찾을 수 없습니다.')
-    if (entry.status !== 'OFFERED') throw new Error('예매 대기 상태가 아닙니다.')
-    const zone = entry.offeredZone!
-    entry.status = 'CANCELLED'
-    entry.position = 0
-    // 배정됐던 취소표는 다음 대기자에게 이전
-    const next = offerToNextWaiter(entry.sessionId, zone)
-    recomputePositions(entry.sessionId)
-    return next ? clone(next) : null
-  },
-
-  // POST /api/waitlist/{id}/decline  (또는 시간 초과 → 다음 대기자에게 이전)
-  declineWaitlistOffer(entryId: string): WaitlistEntry | null {
-    const entry = db.waitlist.find((w) => w.id === entryId)
-    if (!entry) return null
-    if (entry.status !== 'OFFERED') return null
-    const zone = entry.offeredZone!
-    entry.status = 'EXPIRED'
-    const next = offerToNextWaiter(entry.sessionId, zone)
-    recomputePositions(entry.sessionId)
-    return next ? clone(next) : null
   },
 
   // 공연 종료 익일 포인트 적립 배치 (데모용 트리거)
@@ -641,32 +547,6 @@ function refreshSoldOut(performanceId: string): void {
   const invs = db.inventory.filter((i) => sessionIds.includes(i.sessionId))
   const allSold = invs.length > 0 && invs.every((i) => i.sold >= i.total)
   perf.status = allSold ? 'SOLD_OUT' : 'ON_SALE'
-}
-
-/** 취소표가 나온 구역에 대해 다음 대기자에게 우선 예매권 부여 */
-function offerToNextWaiter(sessionId: string, zone: Zone): WaitlistEntry | null {
-  const candidates = db.waitlist
-    .filter((w) => w.sessionId === sessionId && w.status === 'WAITING' && w.zones.includes(zone))
-    .sort((a, b) => a.position - b.position)
-  const next = candidates[0]
-  if (!next) return null
-  next.status = 'OFFERED'
-  next.offeredZone = zone
-  next.position = 0
-  next.offeredAt = formatNow()
-  next.offerExpiresAt = new Date(Date.now() + WAITLIST_OFFER_TTL_SECONDS * 1000).toISOString()
-  recomputePositions(sessionId)
-  return next
-}
-
-/** WAITING 상태 대기자 순번 재계산 */
-function recomputePositions(sessionId: string): void {
-  const waiting = db.waitlist
-    .filter((w) => w.sessionId === sessionId && w.status === 'WAITING')
-    .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
-  waiting.forEach((w, idx) => {
-    w.position = idx + 1
-  })
 }
 
 export { PLATFORM_FEE_RATE }

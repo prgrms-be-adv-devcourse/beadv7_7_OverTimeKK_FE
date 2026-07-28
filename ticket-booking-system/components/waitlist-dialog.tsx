@@ -16,6 +16,13 @@ import { useApp } from '@/lib/store'
 import { formatDay, formatTime, ZONE_META } from '@/lib/domain'
 import { cn } from '@/lib/utils'
 import type { Performance, PerformanceSession, Zone } from '@/lib/types'
+import {
+  standbyApi,
+  standbyErrorMessage,
+  STANDBY_USER_ID,
+  toBackendPerformanceId,
+} from '@/lib/standby-api'
+import { standbyStore } from '@/lib/standby-store'
 
 const MAX_ZONES = 3
 
@@ -34,8 +41,9 @@ export function WaitlistDialog({
   zones: Zone[]
   prefillZones?: Zone[]
 }) {
-  const { joinWaitlist } = useApp()
+  const { userId } = useApp()
   const [selected, setSelected] = useState<Zone[]>([])
+  const [submitting, setSubmitting] = useState(false)
   const availableZones = zones
 
   useEffect(() => {
@@ -64,19 +72,31 @@ export function WaitlistDialog({
     })
   }
 
-  function handleSubmit() {
+  async function handleSubmit() {
+    setSubmitting(true)
     try {
-      joinWaitlist({
+      const result = await standbyApi.create({
+        userId: STANDBY_USER_ID,
+        performanceId: toBackendPerformanceId(performance.id),
+        sessionNum: session.sessionNum,
+        zones: selected,
+      })
+      standbyStore.add(userId, {
+        standbyId: result.standbyId,
         performanceId: performance.id,
         sessionId: session.id,
-        zones: selected,
+        sessionNum: session.sessionNum,
+        zones: result.zones,
+        createdAt: new Date().toISOString(),
       })
       toast.success('취소표 대기 신청이 완료되었습니다.', {
         description: '취소표가 나오면 순서대로 알려드립니다.',
       })
       onOpenChange(false)
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : '대기 신청에 실패했습니다.')
+      toast.error(standbyErrorMessage(e, '대기 신청에 실패했습니다.'))
+    } finally {
+      setSubmitting(false)
     }
   }
 
@@ -148,10 +168,10 @@ export function WaitlistDialog({
         <Button
           size="lg"
           className="w-full"
-          disabled={selected.length === 0}
+          disabled={selected.length === 0 || submitting}
           onClick={handleSubmit}
         >
-          대기 신청하기
+          {submitting ? '신청 중...' : '대기 신청하기'}
         </Button>
       </DialogContent>
     </Dialog>
