@@ -3,10 +3,11 @@
  * ------------------------------------------------------------------
  * performance-service (기본 http://localhost:8083) 의 공연/회차/티켓 조회 API.
  *
- * 좌석 등급/가격/포스터/카테고리는 백엔드에 조회 API가 없어서 여전히 프론트 정적
- * 데이터(lib/performance-extras.ts)로 관리하지만, 좌석 단위 실제 ticketId는
- * `GET /api/tickets`(2026-07-28 추가)로 조회할 수 있다 — order-api.ts의 주문 생성이
- * 이 ticketId를 그대로 사용한다.
+ * 좌석 등급/포스터/카테고리는 백엔드에 조회 API가 없어서 여전히 프론트 정적
+ * 데이터(lib/performance-extras.ts)로 관리하지만, 좌석 단위 실제 ticketId/가격은
+ * `POST /api/tickets/select/seat`(2026-07-29, 백엔드 팀 정식 구현 — 임시로 있던
+ * `GET /api/tickets`를 대체함)로 조회할 수 있다 — order-api.ts의 주문 생성이 이
+ * ticketId를 그대로 사용한다.
  *
  * GET /api/performances 는 과거 hall/venue 조인 버그(VEN404_002, 2026-07-26 기준)가
  * 있었으나 이후 해결 확인됨(2026-07-28). 다만 이 클라이언트는 여전히 hallId만 필요한
@@ -46,7 +47,13 @@ export interface RealTicket {
   seatRow: string
   seatNum: string
   ticketStatus: RealTicketStatus
+}
+
+/** POST /api/tickets/select/seat 응답 — 구역 가격은 좌석 목록과 함께 한 번에 내려온다 */
+export interface RealTicketZone {
+  zone: string
   price: number
+  sessionZones: RealTicket[]
 }
 
 interface ApiResponse<T> {
@@ -103,11 +110,13 @@ export const performanceApi = {
     return request<RealSession[]>(`/api/performance/${performanceId}/session`)
   },
 
-  /** GET /api/tickets — 회차+구역의 좌석(티켓) 목록. 좌석 클릭 → 실제 ticketId 매핑에 사용 */
-  tickets(performanceId: number, sessionNum: number, zone: string): Promise<RealTicket[]> {
-    return request<RealTicket[]>(
-      `/api/tickets?performanceId=${performanceId}&sessionNum=${sessionNum}&zone=${zone}`,
-    )
+  /** POST /api/tickets/select/seat — 회차+구역의 좌석(티켓) 목록 + 구역 가격. 좌석 클릭 → 실제 ticketId 매핑에 사용 */
+  selectSeatZone(performanceId: number, sessionNum: number, zone: string): Promise<RealTicketZone> {
+    return request<RealTicketZone>('/api/tickets/select/seat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ performanceId, sessionNum, zone }),
+    })
   },
 
   /**

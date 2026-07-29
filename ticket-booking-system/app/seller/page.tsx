@@ -41,7 +41,7 @@ export default function SellerPage() {
     endDate: '2026-08-02',
     ticketOpenAt: '2026-07-21 12:00:00',
     hallId: 'h1',
-    posterUrl: '/posters/placeholder.png',
+    posterUrl: '/basic.jpeg',
     category: '콘서트',
   })
   const [sessions, setSessions] = useState([
@@ -148,7 +148,7 @@ export default function SellerPage() {
         endDate: '2026-08-02',
         ticketOpenAt: '2026-07-21 12:00:00',
         hallId: 'h1',
-        posterUrl: '/posters/placeholder.png',
+        posterUrl: '/basic.jpeg',
         category: '콘서트',
       })
       setSessions([{ sessionNum: '1', actor: '', performanceStartAt: '2026-08-01 19:00:00' }])

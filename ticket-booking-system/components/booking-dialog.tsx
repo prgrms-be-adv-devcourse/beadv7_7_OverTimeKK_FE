@@ -19,7 +19,7 @@ import { WaitlistDialog } from '@/components/waitlist-dialog'
 import { useApp } from '@/lib/store'
 import { api } from '@/lib/api'
 import { orderApi, OrderApiError } from '@/lib/order-api'
-import { performanceApi, PerformanceApiError } from '@/lib/performance-api'
+import { performanceApi, type RealTicket } from '@/lib/performance-api'
 import { canWaitlistZone, formatKRW, formatDay, formatTime } from '@/lib/domain'
 import type { Order, Performance, PerformanceSession, Zone } from '@/lib/types'
 
@@ -73,9 +73,46 @@ export function BookingDialog({
   const [waitlistPrefillZones, setWaitlistPrefillZones] = useState<Zone[]>([])
   const [pointsInput, setPointsInput] = useState('0')
   const [realOrder, setRealOrder] = useState<{ orderId: number; paymentId: number } | null>(null)
+  const [selectedRealTicket, setSelectedRealTicket] = useState<{ ticketId: number; price: number } | null>(null)
 
   // performance-service/v2로 등록된 실제 공연은 숫자 ID를 그대로 쓴다(mock은 'p_xxx' 형태)
   const isRealPerformance = /^\d+$/.test(performance.id)
+
+  const [realTickets, setRealTickets] = useState<RealTicket[]>([])
+  const [realZonePrice, setRealZonePrice] = useState<number | null>(null)
+  const [realTicketsLoading, setRealTicketsLoading] = useState(false)
+
+  // real 공연은 좌석 배치도 자체를 POST /api/tickets/select/seat 결과(실제 발행된 티켓)로 그린다.
+  useEffect(() => {
+    if (!isRealPerformance || !activeZone) {
+      setRealTickets([])
+      setRealZonePrice(null)
+      return
+    }
+    let cancelled = false
+    setRealTicketsLoading(true)
+    performanceApi
+      .selectSeatZone(Number(performance.id), session.sessionNum, activeZone)
+      .then((result) => {
+        if (!cancelled) {
+          setRealTickets(result.sessionZones)
+          setRealZonePrice(result.price)
+        }
+      })
+      .catch((e) => {
+        if (!cancelled) {
+          console.warn('실제 좌석 조회 실패:', e)
+          setRealTickets([])
+          setRealZonePrice(null)
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setRealTicketsLoading(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [isRealPerformance, activeZone, performance.id, session.sessionNum])
 
   useEffect(() => {
     if (open) {
@@ -83,6 +120,7 @@ export function BookingDialog({
       setSelectedSeats(heldSeatsForThisSession)
       setOrder(null)
       setRealOrder(null)
+      setSelectedRealTicket(null)
       setWaitlistOpen(false)
       setWaitlistPrefillZones([])
       setPointsInput('0')
@@ -129,6 +167,7 @@ export function BookingDialog({
   const seatMap = useMemo(() => {
     if (!activeZone || !hall) return []
     const occupied = new Set(inventory.find((i) => i.zone === activeZone)?.occupiedSeats ?? [])
+    const realByPosition = new Map(realTickets.map((t) => [`${t.seatRow}-${t.seatNum}`, t]))
     const layout = hall.seatLayout[activeZone] ?? []
     const seats: Array<{
       id: string
@@ -136,23 +175,38 @@ export function BookingDialog({
       col: number
       sold: boolean
       selected: boolean
+      realTicket?: RealTicket
     }> = []
 
     for (const rowLayout of layout) {
       for (let colIndex = 0; colIndex < rowLayout.count; colIndex += 1) {
         const seatId = `${activeZone}-${rowLayout.row}-${colIndex + 1}`
-        seats.push({
-          id: seatId,
-          rowLabel: rowLayout.row,
-          col: colIndex + 1,
-          sold: occupied.has(seatId),
-          selected: (selectedSeats[activeZone] ?? []).includes(seatId),
-        })
+        if (isRealPerformance) {
+          // 실제 발행된 티켓(POST /api/tickets/select/seat) 기준으로만 판단 — 그 좌석에
+          // 해당하는 티켓이 없거나 AVAILABLE이 아니면 매진 처리.
+          const real = realByPosition.get(`${rowLayout.row}-${colIndex + 1}`)
+          seats.push({
+            id: seatId,
+            rowLabel: rowLayout.row,
+            col: colIndex + 1,
+            sold: !real || real.ticketStatus !== 'AVAILABLE',
+            selected: (selectedSeats[activeZone] ?? []).includes(seatId),
+            realTicket: real,
+          })
+        } else {
+          seats.push({
+            id: seatId,
+            rowLabel: rowLayout.row,
+            col: colIndex + 1,
+            sold: occupied.has(seatId),
+            selected: (selectedSeats[activeZone] ?? []).includes(seatId),
+          })
+        }
       }
     }
 
     return seats
-  }, [activeZone, hall, inventory, selectedSeats])
+  }, [activeZone, hall, inventory, selectedSeats, isRealPerformance, realTickets])
 
   function selectZone(zone: Zone) {
     const target = zoneRows.find((z) => z.zone === zone)
@@ -172,7 +226,7 @@ export function BookingDialog({
     setActiveZone(zone)
   }
 
-  function toggleSeat(zone: Zone, seatId: string) {
+  function toggleSeat(zone: Zone, seatId: string, realTicket?: RealTicket) {
     const row = zoneRows.find((z) => z.zone === zone)
     const remaining = row?.remaining ?? 0
     if (!row || remaining <= 0) return
@@ -181,6 +235,7 @@ export function BookingDialog({
 
     if (alreadySelected) {
       setSelectedSeats((prev) => ({ ...prev, [zone]: [] }))
+      setSelectedRealTicket(null)
       releaseSeat()
       return
     }
@@ -192,6 +247,9 @@ export function BookingDialog({
       A: [],
       [zone]: [seatId],
     })
+    setSelectedRealTicket(
+      realTicket && realZonePrice != null ? { ticketId: realTicket.ticketId, price: realZonePrice } : null,
+    )
     holdSeat({ performanceId: performance.id, sessionId: session.id, zone, seatId })
   }
 
@@ -212,37 +270,25 @@ export function BookingDialog({
       releaseSeat()
       toast.success('결제가 완료되어 티켓이 발권되었습니다.')
 
-      if (isRealPerformance) {
-        const first = selectedSeatPayload[0]
-        const firstLabel = first?.seatLabels[0]
-        if (first && firstLabel) {
-          void syncRealOrder(first.zone, firstLabel)
-        }
+      if (isRealPerformance && selectedRealTicket) {
+        void syncRealOrder(selectedRealTicket)
       }
     } catch (e) {
       toast.error(e instanceof Error ? e.message : '결제에 실패했습니다.')
     }
   }
 
-  // 실제 공연에 한해, 화면에서 고른 좌석에 대응하는 실제 ticketId를 찾아(GET /api/tickets)
-  // order-service에도 주문/결제를 남겨본다 — mock 예매와는 별개의 그림자 호출이라 실패해도
-  // 화면 표시엔 영향 없음.
-  async function syncRealOrder(zone: Zone, seatLabel: string) {
+  // 실제 공연에 한해, 화면에서 고른 좌석의 실제 ticketId(좌석 선택 시 GET /api/tickets로 이미
+  // 확보해둔 값)로 order-service에도 주문/결제를 남겨본다 — mock 예매와는 별개의 그림자 호출이라
+  // 실패해도 화면 표시엔 영향 없음.
+  async function syncRealOrder(ticket: { ticketId: number; price: number }) {
     try {
-      const [, row, col] = seatLabel.split('-')
-      const tickets = await performanceApi.tickets(Number(performance.id), session.sessionNum, zone)
-      const match = tickets.find((t) => t.seatRow === row && t.seatNum === col && t.ticketStatus === 'AVAILABLE')
-      if (!match) {
-        console.warn('실제 좌석 매핑 실패(이미 판매되었거나 좌석 배치 불일치) — 화면 표시엔 영향 없음:', { zone, row, col })
-        return
-      }
-      const created = await orderApi.createOrder(match.ticketId)
-      const paid = await orderApi.pay(created.orderId, match.price)
+      const created = await orderApi.createOrder(ticket.ticketId)
+      const paid = await orderApi.pay(created.orderId, ticket.price)
       const confirmed = await orderApi.confirm(paid.paymentId, paid.transactionKey)
       setRealOrder({ orderId: created.orderId, paymentId: confirmed.paymentId })
     } catch (e) {
-      const message =
-        e instanceof OrderApiError || e instanceof PerformanceApiError ? `${e.code} ${e.message}` : String(e)
+      const message = e instanceof OrderApiError ? `${e.code} ${e.message}` : String(e)
       console.warn('실제 order-service 동기화 실패(화면 표시엔 영향 없음):', message)
     }
   }
@@ -291,7 +337,9 @@ export function BookingDialog({
                     <div>
                       <p className="text-sm font-semibold">{activeZone}석 좌석 배치도</p>
                       <p className="text-xs text-muted-foreground">
-                        무대 기준으로 좌석이 배치되어 있고, 한 번에 하나의 좌석만 선택할 수 있습니다.
+                        {isRealPerformance && realTicketsLoading
+                          ? '실제 좌석 정보를 불러오는 중...'
+                          : '무대 기준으로 좌석이 배치되어 있고, 한 번에 하나의 좌석만 선택할 수 있습니다.'}
                       </p>
                     </div>
                     <span className="text-sm font-medium text-primary">
@@ -321,7 +369,7 @@ export function BookingDialog({
                               <button
                                 key={seat.id}
                                 type="button"
-                                onClick={() => toggleSeat(activeZone, seat.id)}
+                                onClick={() => toggleSeat(activeZone, seat.id, seat.realTicket)}
                                 className={`h-10 rounded-md border text-sm font-medium transition-colors ${
                                   seat.sold
                                     ? 'cursor-not-allowed border-muted bg-muted text-muted-foreground'
