@@ -69,6 +69,8 @@ web_modules/
 .env
 .env.*
 !.env.example
+# NEXT_PUBLIC_* 값만 있는 빌드용 설정 — 시크릿 아님, Docker 빌드에 필요해서 커밋함
+!ticket-booking-system/.env.production
 
 # parcel-bundler cache (https://parceljs.org/)
 .cache
