@@ -1,6 +1,6 @@
 'use client'
 
-import { useMemo, useState } from 'react'
+import { useMemo, useState, type ChangeEvent } from 'react'
 import Link from 'next/link'
 import { Plus, Pencil, Trash2, DollarSign, Users, Minus } from 'lucide-react'
 import { useApp } from '@/lib/store'
@@ -26,6 +26,8 @@ export default function SellerPage() {
   } = useApp()
   void version
   const [submitting, setSubmitting] = useState(false)
+  const [isUploadingPoster, setIsUploadingPoster] = useState(false)
+  const [posterUploadError, setPosterUploadError] = useState<string | null>(null)
 
   const performances = useMemo(() => {
     const all = api.listPerformances()
@@ -41,7 +43,7 @@ export default function SellerPage() {
     endDate: '2026-08-02',
     ticketOpenAt: '2026-07-21 12:00:00',
     hallId: 'h1',
-    posterUrl: '/basic.jpeg',
+    posterUrl: '',
     category: '콘서트',
   })
   const [sessions, setSessions] = useState([
@@ -81,6 +83,45 @@ export default function SellerPage() {
   function removePriceRow(id: number) {
     setPriceRows((prev) => (prev.length > 1 ? prev.filter((item) => item.id !== id) : prev))
   }
+
+  async function handlePosterUpload(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0]
+    if (!file) return
+
+    setIsUploadingPoster(true)
+    setPosterUploadError(null)
+
+    try {
+      const response = await fetch('/api/s3/presigned-url', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          fileName: file.name,
+          contentType: file.type || 'application/octet-stream',
+        }),
+      })
+
+      const data = await response.json()
+      if (!response.ok) {
+        throw new Error(data.error || '이미지 업로드 준비에 실패했습니다.')
+      }
+
+      await fetch(data.uploadUrl, {
+        method: 'PUT',
+        headers: { 'Content-Type': file.type || 'application/octet-stream' },
+        body: file,
+      })
+
+      setForm((prev) => ({ ...prev, posterUrl: data.publicUrl }))
+    } catch (error) {
+      setPosterUploadError(error instanceof Error ? error.message : '이미지 업로드에 실패했습니다.')
+    } finally {
+      setIsUploadingPoster(false)
+      event.target.value = ''
+    }
+  }
+
+  const selectedHall = HALL_OPTIONS.find((hall) => hall.localHallId === form.hallId)
 
   // 실제 performance-service(v2 등록 API)로 공연을 등록한다.
   // 좌석 배치도 데이터가 있는 3개 공연장(HALL_OPTIONS)만 지원 — lib/performance-extras.ts 참고.
@@ -148,7 +189,7 @@ export default function SellerPage() {
         endDate: '2026-08-02',
         ticketOpenAt: '2026-07-21 12:00:00',
         hallId: 'h1',
-        posterUrl: '/basic.jpeg',
+        posterUrl: '',
         category: '콘서트',
       })
       setSessions([{ sessionNum: '1', actor: '', performanceStartAt: '2026-08-01 19:00:00' }])
@@ -214,7 +255,27 @@ export default function SellerPage() {
               <Input type="date" value={form.startDate} onChange={(e) => setForm({ ...form, startDate: e.target.value })} />
               <Input type="date" value={form.endDate} onChange={(e) => setForm({ ...form, endDate: e.target.value })} />
               <Input placeholder="티켓 오픈 yyyy-MM-dd HH:mm:ss" value={form.ticketOpenAt} onChange={(e) => setForm({ ...form, ticketOpenAt: e.target.value })} />
-              <Input placeholder="포스터 URL" value={form.posterUrl} onChange={(e) => setForm({ ...form, posterUrl: e.target.value })} />
+            </div>
+            <div className="md:col-span-2 space-y-2">
+              <div className="flex flex-wrap items-center gap-2">
+                <label className="inline-flex cursor-pointer items-center rounded-md border border-border px-3 py-2 text-sm font-medium transition hover:bg-accent">
+                  <Plus className="mr-2 size-4" />
+                  {isUploadingPoster ? '업로드 중...' : '포스터 이미지 업로드'}
+                  <input type="file" accept="image/*" className="sr-only" onChange={handlePosterUpload} />
+                </label>
+                <span className="text-sm text-muted-foreground">
+                  선택된 공연장: {selectedHall?.label ?? '공연장 선택'}
+                </span>
+              </div>
+              {form.posterUrl ? (
+                <div className="rounded-lg border border-border p-3">
+                  <p className="mb-2 text-sm font-medium">업로드된 포스터</p>
+                  <img src={form.posterUrl} alt="공연 포스터 미리보기" className="h-40 w-full rounded-md object-cover" />
+                </div>
+              ) : (
+                <p className="text-sm text-muted-foreground">이미지를 업로드하면 포스터가 표시됩니다.</p>
+              )}
+              {posterUploadError ? <p className="text-sm text-destructive">{posterUploadError}</p> : null}
             </div>
             <Textarea placeholder="공연 설명" value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} />
           </div>
@@ -341,6 +402,9 @@ export default function SellerPage() {
               <div className="flex items-start justify-between gap-2">
                 <div>
                   <h2 className="font-semibold">{performance.title}</h2>
+                  <p className="mt-1 text-sm text-muted-foreground">
+                    {HALL_OPTIONS.find((hall) => hall.localHallId === performance.hallId)?.label ?? '공연장 정보 없음'}
+                  </p>
                   <p className="mt-1 text-sm text-muted-foreground">{performance.category}</p>
                 </div>
                 <PerformanceStatusBadge status={performance.status} />
