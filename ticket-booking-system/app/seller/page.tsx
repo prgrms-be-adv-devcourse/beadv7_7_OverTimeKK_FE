@@ -122,6 +122,7 @@ export default function SellerPage() {
   }
 
   const selectedHall = HALL_OPTIONS.find((hall) => hall.localHallId === form.hallId)
+  const selectedHallLabel = selectedHall?.label ?? '공연장 선택'
 
   // 실제 performance-service(v2 등록 API)로 공연을 등록한다.
   // 좌석 배치도 데이터가 있는 3개 공연장(HALL_OPTIONS)만 지원 — lib/performance-extras.ts 참고.
@@ -242,7 +243,7 @@ export default function SellerPage() {
               <Input placeholder="러닝타임(분)" type="number" value={form.runtime} onChange={(e) => setForm({ ...form, runtime: e.target.value })} />
               <Select value={form.hallId} onValueChange={(value) => value && setForm({ ...form, hallId: value })}>
                 <SelectTrigger className="w-full">
-                  <SelectValue placeholder="공연장 선택" />
+                  <span>{selectedHallLabel}</span>
                 </SelectTrigger>
                 <SelectContent>
                   {HALL_OPTIONS.map((hall) => (
@@ -263,9 +264,6 @@ export default function SellerPage() {
                   {isUploadingPoster ? '업로드 중...' : '포스터 이미지 업로드'}
                   <input type="file" accept="image/*" className="sr-only" onChange={handlePosterUpload} />
                 </label>
-                <span className="text-sm text-muted-foreground">
-                  선택된 공연장: {selectedHall?.label ?? '공연장 선택'}
-                </span>
               </div>
               {form.posterUrl ? (
                 <div className="rounded-lg border border-border p-3">
