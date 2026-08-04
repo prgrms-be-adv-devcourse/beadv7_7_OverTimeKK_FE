@@ -21,9 +21,6 @@
 
 const BASE_URL = process.env.NEXT_PUBLIC_ORDER_API_BASE_URL ?? 'http://localhost:8082'
 
-/** 실제 인증이 아직 없어 주문 생성에 쓸 숫자 사용자 ID. lib/standby-api.ts STANDBY_USER_ID와 같은 임시방편 */
-export const ORDER_USER_ID = 1
-
 /** POST /api/order의 orderType — 일반 예매 흐름에서는 항상 GENERAL, 대기열 매칭 구매는 STANDBY */
 export type OrderType = 'GENERAL' | 'STANDBY'
 
@@ -91,15 +88,15 @@ export interface OrderHistoryItem {
 
 export const orderApi = {
   /** GET /api/order?userId= — 결제 완료된 주문 내역 */
-  getOrderHistory(userId: number = ORDER_USER_ID): Promise<OrderHistoryItem[]> {
+  getOrderHistory(userId: number): Promise<OrderHistoryItem[]> {
     return request<OrderHistoryItem[]>(`/api/order?userId=${userId}`)
   },
 
   /** POST /api/order — ticketId는 performanceApi.tickets()로 조회한 실제 좌석의 ticketId */
-  createOrder(ticketId: number, orderType: OrderType = 'GENERAL'): Promise<CreateOrderResult> {
+  createOrder(ticketId: number, userId: number, orderType: OrderType = 'GENERAL'): Promise<CreateOrderResult> {
     return request<CreateOrderResult>('/api/order', {
       method: 'POST',
-      body: JSON.stringify({ userId: ORDER_USER_ID, ticketId, orderType }),
+      body: JSON.stringify({ userId, ticketId, orderType }),
     })
   },
 

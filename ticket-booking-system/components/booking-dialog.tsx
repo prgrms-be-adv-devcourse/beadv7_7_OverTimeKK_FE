@@ -17,11 +17,10 @@ import { BookingSteps } from '@/components/booking-steps'
 import { TossPayment } from '@/components/toss-payment'
 import { WaitlistDialog } from '@/components/waitlist-dialog'
 import { useApp } from '@/lib/store'
-import { api } from '@/lib/api'
 import { orderApi, OrderApiError } from '@/lib/order-api'
 import { performanceApi, type RealTicket } from '@/lib/performance-api'
 import { canWaitlistZone, formatKRW, formatDay, formatTime } from '@/lib/domain'
-import type { Order, Performance, PerformanceSession, Zone } from '@/lib/types'
+import type { Performance, PerformanceSession, Zone } from '@/lib/types'
 
 const STEP_LABELS = ['좌석 선택', '가격 선택', '결제']
 
@@ -51,7 +50,7 @@ export function BookingDialog({
   session: PerformanceSession
   zoneRows: ZoneRow[]
 }) {
-  const { createOrder, userId, points, heldSeat, holdSeat, releaseSeat } = useApp()
+  const { createOrder, points, heldSeat, holdSeat, releaseSeat, authUser } = useApp()
 
   const heldSeatsForThisSession = useMemo<Record<Zone, string[]>>(() => {
     const empty: Record<Zone, string[]> = { VIP: [], R: [], S: [], A: [] }
@@ -68,7 +67,6 @@ export function BookingDialog({
   const [step, setStep] = useState<'select' | 'price' | 'pay' | 'done'>('select')
   const [activeZone, setActiveZone] = useState<Zone | null>(null)
   const [selectedSeats, setSelectedSeats] = useState<Record<Zone, string[]>>(heldSeatsForThisSession)
-  const [order, setOrder] = useState<Order | null>(null)
   const [waitlistOpen, setWaitlistOpen] = useState(false)
   const [waitlistPrefillZones, setWaitlistPrefillZones] = useState<Zone[]>([])
   const [pointsInput, setPointsInput] = useState('0')
@@ -118,7 +116,6 @@ export function BookingDialog({
     if (open) {
       setStep('select')
       setSelectedSeats(heldSeatsForThisSession)
-      setOrder(null)
       setRealOrder(null)
       setSelectedRealTicket(null)
       setWaitlistOpen(false)
@@ -161,52 +158,44 @@ export function BookingDialog({
     setPointsInput(String(clamped))
   }
 
-  const hall = useMemo(() => api.getHall(performance.hallId), [performance.hallId])
-  const inventory = useMemo(() => api.listInventory(session.id), [session.id, zoneRows])
-
+  // 좌석 배치도는 hall의 정적 배치(mock)가 아니라, 그 회차·구역에 실제 발행된 티켓
+  // (realTickets, seatRow/seatNum 포함)을 기준으로 그린다 — venue/hall 쪽엔 좌석 하나하나의
+  // 배치를 조회하는 API가 없고(BE-요청-hall과-구역가격-조회API 참고), 어차피 결제에 쓸 수
+  // 있는 좌석은 발행된 티켓뿐이라 이게 곧 유일한 정답 데이터다.
   const seatMap = useMemo(() => {
-    if (!activeZone || !hall) return []
-    const occupied = new Set(inventory.find((i) => i.zone === activeZone)?.occupiedSeats ?? [])
-    const realByPosition = new Map(realTickets.map((t) => [`${t.seatRow}-${t.seatNum}`, t]))
-    const layout = hall.seatLayout[activeZone] ?? []
-    const seats: Array<{
-      id: string
-      rowLabel: string
-      col: number
-      sold: boolean
-      selected: boolean
-      realTicket?: RealTicket
-    }> = []
-
-    for (const rowLayout of layout) {
-      for (let colIndex = 0; colIndex < rowLayout.count; colIndex += 1) {
-        const seatId = `${activeZone}-${rowLayout.row}-${colIndex + 1}`
-        if (isRealPerformance) {
-          // 실제 발행된 티켓(POST /api/tickets/select/seat) 기준으로만 판단 — 그 좌석에
-          // 해당하는 티켓이 없거나 AVAILABLE이 아니면 매진 처리.
-          const real = realByPosition.get(`${rowLayout.row}-${colIndex + 1}`)
-          seats.push({
-            id: seatId,
-            rowLabel: rowLayout.row,
-            col: colIndex + 1,
-            sold: !real || real.ticketStatus !== 'AVAILABLE',
-            selected: (selectedSeats[activeZone] ?? []).includes(seatId),
-            realTicket: real,
-          })
-        } else {
-          seats.push({
-            id: seatId,
-            rowLabel: rowLayout.row,
-            col: colIndex + 1,
-            sold: occupied.has(seatId),
-            selected: (selectedSeats[activeZone] ?? []).includes(seatId),
-          })
-        }
+    if (!activeZone) return []
+    const sorted = realTickets
+      .slice()
+      .sort((a, b) => a.seatRow.localeCompare(b.seatRow) || Number(a.seatNum) - Number(b.seatNum))
+    const colByRow = new Map<string, number>()
+    return sorted.map((ticket) => {
+      const col = (colByRow.get(ticket.seatRow) ?? 0) + 1
+      colByRow.set(ticket.seatRow, col)
+      const seatId = `${activeZone}-${ticket.seatRow}-${col}`
+      return {
+        id: seatId,
+        rowLabel: ticket.seatRow,
+        col,
+        sold: ticket.ticketStatus !== 'AVAILABLE',
+        selected: (selectedSeats[activeZone] ?? []).includes(seatId),
+        realTicket: ticket,
       }
-    }
+    })
+  }, [activeZone, selectedSeats, realTickets])
 
-    return seats
-  }, [activeZone, hall, inventory, selectedSeats, isRealPerformance, realTickets])
+  /** 좌석판을 줄 단위로 그리기 위한 그룹핑(등장 순서 = seatMap 정렬 순서 = 행 알파벳순 유지) */
+  const seatRows = useMemo(() => {
+    const order: string[] = []
+    const byRow = new Map<string, typeof seatMap>()
+    for (const seat of seatMap) {
+      if (!byRow.has(seat.rowLabel)) {
+        byRow.set(seat.rowLabel, [])
+        order.push(seat.rowLabel)
+      }
+      byRow.get(seat.rowLabel)!.push(seat)
+    }
+    return order.map((row) => ({ row, seats: byRow.get(row)! }))
+  }, [seatMap])
 
   function selectZone(zone: Zone) {
     const target = zoneRows.find((z) => z.zone === zone)
@@ -253,43 +242,47 @@ export function BookingDialog({
     holdSeat({ performanceId: performance.id, sessionId: session.id, zone, seatId })
   }
 
-  function handlePay(method: string) {
+  // 실 주문(order-service)이 결제 성공/실패를 가르는 유일한 기준이다. 예전에는 mock
+  // createOrder가 먼저 "성공"으로 화면을 넘기고 이 호출은 결과와 무관한 그림자 호출이었는데,
+  // 그러면 실제로 결제가 실패해도 화면은 항상 성공으로 보였다 — 지금은 이 호출 하나로 합친다.
+  async function handlePay(method: string) {
+    if (!authUser) {
+      toast.error('로그인이 필요합니다.')
+      return
+    }
+    if (!selectedRealTicket) {
+      toast.error('선택한 좌석 정보를 찾을 수 없습니다. 좌석을 다시 선택해 주세요.')
+      return
+    }
     try {
-      const selectedSeatPayload = seatSelections.map(({ zone, labels }) => ({ zone, seatLabels: labels }))
-      const { order } = createOrder({
-        buyerId: userId,
-        performanceId: performance.id,
-        sessionId: session.id,
-        selections: selectedSeatPayload.map(({ zone, seatLabels }) => ({ zone, quantity: seatLabels.length })),
-        selectedSeats: selectedSeatPayload,
-        method,
-        pointsUsed,
-      })
-      setOrder(order)
+      const created = await orderApi.createOrder(selectedRealTicket.ticketId, authUser.userId)
+      const paid = await orderApi.pay(created.orderId, selectedRealTicket.price)
+      const confirmed = await orderApi.confirm(paid.paymentId, paid.transactionKey)
+      setRealOrder({ orderId: created.orderId, paymentId: confirmed.paymentId })
       setStep('done')
       releaseSeat()
       toast.success('결제가 완료되어 티켓이 발권되었습니다.')
 
-      if (isRealPerformance && selectedRealTicket) {
-        void syncRealOrder(selectedRealTicket)
+      // 포인트 잔액을 읽어오는 실 API가 아직 없어서(다음 정리 대상), 마이페이지에 보이는
+      // 포인트 잔액/내역은 여전히 mock 장부로 관리한다. 실 결제가 이미 끝난 뒤의 부가 처리라
+      // 여기서 실패해도 이미 완료된 결제 자체를 되돌리지 않는다.
+      try {
+        const selectedSeatPayload = seatSelections.map(({ zone, labels }) => ({ zone, seatLabels: labels }))
+        createOrder({
+          buyerId: String(authUser.userId),
+          performanceId: performance.id,
+          sessionId: session.id,
+          selections: selectedSeatPayload.map(({ zone, seatLabels }) => ({ zone, quantity: seatLabels.length })),
+          selectedSeats: selectedSeatPayload,
+          method,
+          pointsUsed,
+        })
+      } catch (e) {
+        console.warn('포인트 장부(mock) 갱신 실패 — 결제 자체는 완료됨:', e)
       }
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : '결제에 실패했습니다.')
-    }
-  }
-
-  // 실제 공연에 한해, 화면에서 고른 좌석의 실제 ticketId(좌석 선택 시 GET /api/tickets로 이미
-  // 확보해둔 값)로 order-service에도 주문/결제를 남겨본다 — mock 예매와는 별개의 그림자 호출이라
-  // 실패해도 화면 표시엔 영향 없음.
-  async function syncRealOrder(ticket: { ticketId: number; price: number }) {
-    try {
-      const created = await orderApi.createOrder(ticket.ticketId)
-      const paid = await orderApi.pay(created.orderId, ticket.price)
-      const confirmed = await orderApi.confirm(paid.paymentId, paid.transactionKey)
-      setRealOrder({ orderId: created.orderId, paymentId: confirmed.paymentId })
-    } catch (e) {
-      const message = e instanceof OrderApiError ? `${e.code} ${e.message}` : String(e)
-      console.warn('실제 order-service 동기화 실패(화면 표시엔 영향 없음):', message)
+      const message = e instanceof OrderApiError ? `${e.code ?? ''} ${e.message}`.trim() : '결제에 실패했습니다.'
+      toast.error(message)
     }
   }
 
@@ -356,36 +349,38 @@ export function BookingDialog({
                   </div>
 
                   <div className="space-y-2">
-                    {(hall?.seatLayout[activeZone] ?? []).map((rowLayout) => {
-                      const rowSeats = seatMap.filter((seat) => seat.rowLabel === rowLayout.row)
-                      return (
-                        <div key={rowLayout.row} className="flex items-center gap-2">
-                          <span className="w-8 text-center text-xs font-semibold text-muted-foreground">{rowLayout.row}행</span>
-                          <div
-                            className="grid flex-1 gap-2"
-                            style={{ gridTemplateColumns: `repeat(${rowLayout.count}, minmax(0, 1fr))` }}
-                          >
-                            {rowSeats.map((seat) => (
-                              <button
-                                key={seat.id}
-                                type="button"
-                                onClick={() => toggleSeat(activeZone, seat.id, seat.realTicket)}
-                                className={`h-10 rounded-md border text-sm font-medium transition-colors ${
-                                  seat.sold
-                                    ? 'cursor-not-allowed border-muted bg-muted text-muted-foreground'
-                                    : seat.selected
-                                      ? 'border-primary bg-primary text-primary-foreground shadow-sm'
-                                      : 'border-border bg-background hover:border-primary/40 hover:bg-primary/5'
-                                }`}
-                                disabled={seat.sold}
-                              >
-                                {seat.col}
-                              </button>
-                            ))}
-                          </div>
+                    {seatRows.map(({ row, seats }) => (
+                      <div key={row} className="flex items-center gap-2">
+                        <span className="w-8 text-center text-xs font-semibold text-muted-foreground">{row}행</span>
+                        <div
+                          className="grid flex-1 gap-2"
+                          style={{ gridTemplateColumns: `repeat(${seats.length}, minmax(0, 1fr))` }}
+                        >
+                          {seats.map((seat) => (
+                            <button
+                              key={seat.id}
+                              type="button"
+                              onClick={() => toggleSeat(activeZone, seat.id, seat.realTicket)}
+                              className={`h-10 rounded-md border text-sm font-medium transition-colors ${
+                                seat.sold
+                                  ? 'cursor-not-allowed border-muted bg-muted text-muted-foreground'
+                                  : seat.selected
+                                    ? 'border-primary bg-primary text-primary-foreground shadow-sm'
+                                    : 'border-border bg-background hover:border-primary/40 hover:bg-primary/5'
+                              }`}
+                              disabled={seat.sold}
+                            >
+                              {seat.col}
+                            </button>
+                          ))}
                         </div>
-                      )
-                    })}
+                      </div>
+                    ))}
+                    {seatRows.length === 0 && !realTicketsLoading && (
+                      <p className="py-4 text-center text-sm text-muted-foreground">
+                        이 구역에는 발행된 좌석이 없습니다.
+                      </p>
+                    )}
                   </div>
                 </div>
               )}
@@ -520,7 +515,7 @@ export function BookingDialog({
           </>
         )}
 
-        {step === 'done' && order && (
+        {step === 'done' && (
           <>
             <DialogHeader>
               <DialogTitle className="flex items-center gap-2">
@@ -539,24 +534,26 @@ export function BookingDialog({
                 {formatTime(session.performanceStartAt)}
               </p>
               <div className="space-y-1">
-                {order.items.map((it) => (
-                  <div key={it.zone} className="flex items-center justify-between text-sm">
+                {seatSelections.map((item) => (
+                  <div key={item.zone} className="flex items-center justify-between text-sm">
                     <span className="flex items-center gap-1.5">
-                      <ZoneBadge zone={it.zone} /> {it.quantity}매
+                      <ZoneBadge zone={item.zone} /> {item.labels.length}매
                     </span>
-                    <span className="text-muted-foreground">{it.seatLabels.join(', ')}</span>
+                    <span className="text-muted-foreground">
+                      {item.labels.map((label) => formatSelectedSeatLabel(label)).join(', ')}
+                    </span>
                   </div>
                 ))}
               </div>
-              {!!order.pointsUsed && (
+              {pointsUsed > 0 && (
                 <div className="flex items-center justify-between text-sm text-warning">
                   <span>포인트 사용</span>
-                  <span>-{formatKRW(order.pointsUsed)}</span>
+                  <span>-{formatKRW(pointsUsed)}</span>
                 </div>
               )}
               <div className="flex items-center justify-between border-t border-border pt-2 text-sm font-semibold">
                 <span>결제금액</span>
-                <span>{formatKRW(order.totalAmount - (order.pointsUsed ?? 0))}</span>
+                <span>{formatKRW(finalAmount)}</span>
               </div>
             </div>
             {realOrder && (

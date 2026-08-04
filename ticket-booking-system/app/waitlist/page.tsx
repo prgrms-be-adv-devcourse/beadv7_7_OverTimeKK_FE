@@ -19,13 +19,14 @@ import {
 } from '@/components/ui/dialog'
 import { WaitlistPaymentDialog } from '@/components/waitlist-payment-dialog'
 import { useMyStandby, type StandbySummaryEntry } from '@/lib/use-standby'
-import { standbyApi, standbyErrorMessage, STANDBY_USER_ID } from '@/lib/standby-api'
+import { standbyApi, standbyErrorMessage } from '@/lib/standby-api'
 import { standbyStore } from '@/lib/standby-store'
+import { LoginRequired } from '@/components/login-required'
 import type { Zone } from '@/lib/types'
 
 export default function WaitlistPage() {
-  const { userId, role } = useApp()
-  const { entries, refresh } = useMyStandby(userId, STANDBY_USER_ID)
+  const { userId, role, authUser, authLoading } = useApp()
+  const { entries, refresh } = useMyStandby(userId ?? '', authUser?.userId ?? 0)
   const [selectedStandbyId, setSelectedStandbyId] = useState<number | null>(null)
   const [payingStandbyId, setPayingStandbyId] = useState<number | null>(null)
 
@@ -43,9 +44,10 @@ export default function WaitlistPage() {
     : undefined
 
   async function handleCancelAll(entry: StandbySummaryEntry) {
+    if (!authUser) return
     try {
-      await standbyApi.cancel(entry.record.standbyId, STANDBY_USER_ID)
-      standbyStore.remove(userId, entry.record.standbyId)
+      await standbyApi.cancel(entry.record.standbyId, authUser.userId)
+      standbyStore.remove(String(authUser.userId), entry.record.standbyId)
       refresh()
     } catch (e) {
       toast.error(standbyErrorMessage(e, '대기 취소에 실패했습니다.'))
@@ -53,9 +55,10 @@ export default function WaitlistPage() {
   }
 
   async function handleCancelZone(entry: StandbySummaryEntry, zone: Zone) {
+    if (!authUser) return
     try {
-      await standbyApi.cancelZone(entry.record.standbyId, zone, STANDBY_USER_ID)
-      standbyStore.removeZone(userId, entry.record.standbyId, zone)
+      await standbyApi.cancelZone(entry.record.standbyId, zone, authUser.userId)
+      standbyStore.removeZone(String(authUser.userId), entry.record.standbyId, zone)
       refresh()
     } catch (e) {
       toast.error(standbyErrorMessage(e, '구역별 취소에 실패했습니다.'))
@@ -67,6 +70,8 @@ export default function WaitlistPage() {
     setPayingStandbyId(standbyId)
   }
 
+  if (authLoading) return null
+  if (!authUser) return <LoginRequired message="대기 신청 내역은 로그인 후 이용할 수 있습니다." />
   if (role !== 'BUYER') {
     return (
       <div className="mx-auto max-w-5xl px-4 py-10">

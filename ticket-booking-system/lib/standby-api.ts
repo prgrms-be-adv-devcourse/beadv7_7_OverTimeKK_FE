@@ -12,13 +12,6 @@ import type { Zone } from './types'
 
 const BASE_URL = process.env.NEXT_PUBLIC_STANDBY_API_BASE_URL ?? 'http://localhost:8083'
 
-/**
- * 실제 인증이 아직 없어 X-User-Id 헤더에 쓸 숫자 사용자 ID.
- * 프론트 mock 도메인의 BUYER_ID('u_buyer')는 문자열이라 그대로 쓸 수 없어 임시 고정값을 사용한다.
- * 로그인이 붙으면 실제 인증된 사용자 ID로 교체해야 한다.
- */
-export const STANDBY_USER_ID = 1
-
 /** 결제 제한 시간(초). 백엔드가 만료시각을 내려주지 않아(문서 2번 항목 참고) 프론트에서 근사 계산용으로만 사용. */
 export const STANDBY_OFFER_TTL_SECONDS = 1800
 

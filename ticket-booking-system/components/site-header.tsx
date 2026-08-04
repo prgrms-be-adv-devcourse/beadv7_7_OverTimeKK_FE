@@ -3,12 +3,12 @@
 import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
 import { Ticket, Bell, Coins } from 'lucide-react'
+import { toast } from 'sonner'
 import { api } from '@/lib/api'
 import { useApp } from '@/lib/store'
 import { formatKRW, formatDay, formatTime } from '@/lib/domain'
 import { cn } from '@/lib/utils'
 import { useMyStandby } from '@/lib/use-standby'
-import { STANDBY_USER_ID } from '@/lib/standby-api'
 import { Badge } from '@/components/ui/badge'
 import {
   DropdownMenu,
@@ -31,12 +31,12 @@ const sellerNav = [
 ]
 
 export function SiteHeader() {
-  const { role, setRole, userId, userName, points } = useApp()
+  const { role, setRole, userId, userName, points, authUser, logoutAuth } = useApp()
   const pathname = usePathname()
   const router = useRouter()
   const nav = role === 'BUYER' ? buyerNav : sellerNav
 
-  const { entries } = useMyStandby(userId, STANDBY_USER_ID)
+  const { entries } = useMyStandby(userId ?? '', authUser?.userId ?? 0)
   const offeredEntries =
     role === 'BUYER'
       ? entries
@@ -51,6 +51,14 @@ export function SiteHeader() {
           })
       : []
   const offeredCount = offeredEntries.length
+
+  function handleSetRole(next: 'BUYER' | 'SELLER') {
+    if (!authUser) {
+      toast.error('로그인이 필요합니다.')
+      return
+    }
+    setRole(next)
+  }
 
   return (
     <header className="sticky top-0 z-40 border-b border-border bg-background/85 backdrop-blur-md">
@@ -144,9 +152,10 @@ export function SiteHeader() {
           <div className="flex items-center rounded-lg border border-border p-0.5">
             <button
               type="button"
-              onClick={() => setRole('BUYER')}
+              onClick={() => handleSetRole('BUYER')}
+              disabled={!authUser}
               className={cn(
-                'rounded-md px-2.5 py-1 text-xs font-medium transition-colors',
+                'rounded-md px-2.5 py-1 text-xs font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50',
                 role === 'BUYER'
                   ? 'bg-primary text-primary-foreground'
                   : 'text-muted-foreground hover:text-foreground',
@@ -156,9 +165,10 @@ export function SiteHeader() {
             </button>
             <button
               type="button"
-              onClick={() => setRole('SELLER')}
+              onClick={() => handleSetRole('SELLER')}
+              disabled={!authUser}
               className={cn(
-                'rounded-md px-2.5 py-1 text-xs font-medium transition-colors',
+                'rounded-md px-2.5 py-1 text-xs font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50',
                 role === 'SELLER'
                   ? 'bg-primary text-primary-foreground'
                   : 'text-muted-foreground hover:text-foreground',
@@ -167,6 +177,26 @@ export function SiteHeader() {
               판매자
             </button>
           </div>
+
+          {authUser ? (
+            <div className="hidden items-center gap-1.5 text-xs sm:flex">
+              <span className="font-medium text-foreground">{authUser.username}</span>
+              <button
+                type="button"
+                onClick={() => void logoutAuth()}
+                className="rounded-md px-1.5 py-1 text-muted-foreground transition-colors hover:text-foreground"
+              >
+                로그아웃
+              </button>
+            </div>
+          ) : (
+            <Link
+              href="/login"
+              className="hidden text-xs font-medium text-muted-foreground transition-colors hover:text-foreground sm:inline-flex"
+            >
+              로그인
+            </Link>
+          )}
         </div>
       </div>
 

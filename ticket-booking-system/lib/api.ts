@@ -6,20 +6,7 @@
  * 실제 연동 시 각 함수 본문을 `fetch(...)` 호출로 교체하면 됩니다.
  */
 
-import {
-  SELLER_ID,
-  seedHalls,
-  seedInventory,
-  seedOrders,
-  seedPayments,
-  seedPerformances,
-  seedPoints,
-  seedSessions,
-  seedSettlements,
-  seedUsers,
-  seedZonePrices,
-  seatLabelFor,
-} from './mock-data'
+import { seedHalls, seatLabelFor } from './mock-data'
 import { computeRefund, NOW, parseDateTime } from './domain'
 import { getPerformanceExtras } from './performance-extras'
 import type { RealPerformance, RealSession } from './performance-api'
@@ -43,6 +30,12 @@ function clone<T>(v: T): T {
   return structuredClone(v)
 }
 
+/**
+ * 실 공연 병합 시 채워넣는 placeholder — 백엔드가 sellerId를 안 내려줘서 실제 소유자를
+ * 특정할 수 없다. app/seller/page.tsx는 이 값으로 실 공연을 필터링하지 않는다.
+ */
+const UNKNOWN_SELLER_ID = 'unknown-seller'
+
 // 시드 데이터의 ID(o_1001, pay_1001 등)와 충돌하지 않도록 충분히 높은 값에서 시작
 let counter = 100000
 function nextId(prefix: string): string {
@@ -54,16 +47,20 @@ function nextId(prefix: string): string {
 // 인메모리 DB (mutable)
 // ------------------------------------------------------------------
 const db = {
-  users: clone(seedUsers) as User[],
+  // 사용자/주문/결제/포인트/정산은 더 이상 mock 시드가 없다 — 실 로그인 사용자가 처음
+  // 활동할 때 ensureMockUser()가 그때그때 만든다(포인트 0부터 시작, 가짜 보너스 없음).
+  users: [] as User[],
   halls: clone(seedHalls) as Hall[],
-  performances: clone(seedPerformances) as Performance[],
-  sessions: clone(seedSessions) as PerformanceSession[],
-  zonePrices: clone(seedZonePrices) as ZonePrice[],
-  inventory: clone(seedInventory) as SeatInventory[],
-  orders: clone(seedOrders) as Order[],
-  payments: clone(seedPayments) as Payment[],
-  points: clone(seedPoints) as PointTransaction[],
-  settlements: clone(seedSettlements) as Settlement[],
+  // 공연/회차/구역가격/재고도 마찬가지로 mock 시드가 없다 — 전부 importRealPerformances()로
+  // 앱 시작 시 채워지는 실 공연 데이터 기준으로만 채워진다.
+  performances: [] as Performance[],
+  sessions: [] as PerformanceSession[],
+  zonePrices: [] as ZonePrice[],
+  inventory: [] as SeatInventory[],
+  orders: [] as Order[],
+  payments: [] as Payment[],
+  points: [] as PointTransaction[],
+  settlements: [] as Settlement[],
 }
 
 export type DbSnapshot = typeof db
@@ -94,6 +91,20 @@ export const api = {
     return clone(db.users.find((u) => u.id === id))
   },
 
+  /**
+   * 실 로그인 사용자가 처음 활동할 때(마이페이지 진입, 결제 등) mock 장부 레코드를 만들어
+   * 준다. 이미 있으면 그대로 반환 — 포인트는 0부터 시작한다(가짜 보너스 없음).
+   * lib/store.tsx가 authUser 복원/로그인 시 호출한다.
+   */
+  ensureMockUser(id: string, name: string): User {
+    let user = db.users.find((u) => u.id === id)
+    if (!user) {
+      user = { id, name, email: '', role: 'BUYER', points: 0 }
+      db.users.push(user)
+    }
+    return clone(user)
+  },
+
   // GET /api/halls
   listHalls(): Hall[] {
     return clone(db.halls)
@@ -115,18 +126,21 @@ export const api = {
       if (db.performances.some((p) => p.id === id)) continue
 
       const extras = getPerformanceExtras(real.title)
-      const hall = db.halls.find((h) => h.id === extras.hallId)
 
       db.performances.push({
         id,
-        sellerId: SELLER_ID,
+        // 백엔드 GET /api/performances/detail* 응답에 sellerId가 없어서 실 소유자를 알 수
+        // 없다(BE-요청 노트로 별도 정리함) — 이 값은 실 공연 소유권 판단에 쓰지 말 것.
+        sellerId: UNKNOWN_SELLER_ID,
         title: real.title,
         description: real.description,
         runtime: real.runtime,
         startDate: real.startDate,
         endDate: real.endDate,
         ticketOpenAt: real.ticketOpenAt,
-        hallId: extras.hallId,
+        // 실 hallId를 그대로 저장(mock hall 매핑 아님) — hall 이름/좌석배치는
+        // lib/venue-api.ts(venueApi.hallDirectory(), performanceApi.selectSeatZone())로 조회.
+        hallId: String(real.hallId),
         posterUrl: extras.posterUrl,
         category: extras.category,
         status: 'ON_SALE',
@@ -153,7 +167,9 @@ export const api = {
           db.inventory.push({
             sessionId,
             zone,
-            total: hall ? hall.capacity[zone] : 100,
+            // mock 재고 총량은 이제 렌더링에 안 쓰인다(잔여석은 실 티켓 조회로 계산) —
+            // 고정값으로만 채워서 다른 mock 로직(있다면)이 깨지지 않게만 유지.
+            total: 100,
             sold: 0,
             occupiedSeats: [],
           })

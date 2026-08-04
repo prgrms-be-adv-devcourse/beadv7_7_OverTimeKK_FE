@@ -9,9 +9,11 @@ import {
   useState,
   type ReactNode,
 } from 'react'
+import { toast } from 'sonner'
 import { api } from './api'
-import { BUYER_ID, SELLER_ID } from './mock-data'
 import { performanceApi } from './performance-api'
+import { userApi, type SignUpBusinessInput, type SignUpIndividualInput } from './user-api'
+import { readAuth, writeAuth, clearAuth, type StoredAuth, type StoredAuthUser } from './auth-store'
 import type { UserRole, Zone } from './types'
 
 /** 좌석 선택 중 임시로 점유된 좌석. 새로고침 시 초기화되고, 페이지 이동만으로는 유지된다. */
@@ -25,8 +27,8 @@ export interface HeldSeat {
 interface AppContextValue {
   role: UserRole
   setRole: (role: UserRole) => void
-  /** 현재 활동 사용자 ID */
-  userId: string
+  /** 실 로그인 사용자의 mock 장부 ID(문자열로 변환된 authUser.userId). 로그인 안 했으면 null. */
+  userId: string | null
   userName: string
   points: number
   /** 데이터 변경 카운터 — 구독 컴포넌트 리렌더 트리거 */
@@ -38,6 +40,18 @@ interface AppContextValue {
    * 실제 공연 상세 페이지 등에서 notFound() 판단은 이 값이 true인 뒤에만 해야 한다.
    */
   performancesLoaded: boolean
+
+  /**
+   * 실 user-service 로그인 상태. 기존 role(BUYER/SELLER) 토글과는 완전히 별개다 —
+   * role은 여전히 화면 전환용 mock 토글이고, authUser는 실제 로그인 여부만 나타낸다.
+   * 로그인 안 했으면 null. 마운트 시 localStorage에서 복원되기 전엔 authLoading이 true.
+   */
+  authUser: StoredAuthUser | null
+  authLoading: boolean
+  loginWithCredentials: (username: string, password: string) => Promise<void>
+  signUpIndividual: (input: SignUpIndividualInput) => Promise<void>
+  signUpBusiness: (input: SignUpBusinessInput) => Promise<void>
+  logoutAuth: () => Promise<void>
 
   /** 현재 점유 중인 좌석 (한 번에 하나만 선택 가능) */
   heldSeat: HeldSeat | null
@@ -65,14 +79,93 @@ interface AppContextValue {
 const AppContext = createContext<AppContextValue | null>(null)
 
 export function AppProvider({ children }: { children: ReactNode }) {
-  const [role, setRole] = useState<UserRole>('BUYER')
+  const [roleState, setRoleState] = useState<UserRole>('BUYER')
   const [version, setVersion] = useState(0)
   const [heldSeat, setHeldSeat] = useState<HeldSeat | null>(null)
   const [performancesLoaded, setPerformancesLoaded] = useState(false)
+  const [auth, setAuth] = useState<StoredAuth | null>(null)
+  const [authLoading, setAuthLoading] = useState(true)
 
   const refresh = useCallback(() => setVersion((v) => v + 1), [])
   const holdSeat = useCallback((seat: HeldSeat) => setHeldSeat(seat), [])
   const releaseSeat = useCallback(() => setHeldSeat(null), [])
+
+  // 마운트 시 localStorage에 저장된 로그인 상태를 복원한다. 백엔드에 다시 검증하지는
+  // 않음(액세스 토큰 만료/자동 갱신은 범위 밖) — 로그인 필요한 호출이 401을 받으면
+  // 그 화면에서 개별적으로 처리한다.
+  useEffect(() => {
+    setAuth(readAuth())
+    setAuthLoading(false)
+  }, [])
+
+  // 개인(INDIVIDUAL) 회원은 판매자 화면으로 전환할 수 없다. 로그인 중 SELLER로 바뀌는
+  // 걸 막는 것과 별개로, 이미 SELLER인 상태에서 개인 계정으로 로그인/전환되면 되돌린다.
+  useEffect(() => {
+    if (auth?.user.userType === 'INDIVIDUAL' && roleState === 'SELLER') {
+      setRoleState('BUYER')
+      toast.error('개인 회원은 판매자로 전환할 수 없습니다.')
+    }
+  }, [auth, roleState])
+
+  // 실 로그인 사용자가 확인될 때마다(마운트 시 복원 포함) mock 장부 레코드를 보장해둔다 —
+  // 없으면 포인트 0으로 새로 만들고, 있으면 그대로 둔다.
+  useEffect(() => {
+    if (auth) {
+      api.ensureMockUser(String(auth.user.userId), auth.user.username)
+      setVersion((v) => v + 1)
+    }
+  }, [auth])
+
+  const setRole = useCallback(
+    (next: UserRole) => {
+      if (next === 'SELLER' && auth?.user.userType === 'INDIVIDUAL') {
+        toast.error('개인 회원은 판매자로 전환할 수 없습니다.')
+        return
+      }
+      setRoleState(next)
+    },
+    [auth],
+  )
+
+  const loginWithCredentials = useCallback(async (username: string, password: string) => {
+    const tokens = await userApi.login(username, password)
+    const me = await userApi.getMe(tokens.accessToken)
+    const nextAuth: StoredAuth = {
+      accessToken: tokens.accessToken,
+      refreshToken: tokens.refreshToken,
+      user: { userId: me.userId, username: me.username, userType: me.userType },
+    }
+    writeAuth(nextAuth)
+    setAuth(nextAuth)
+  }, [])
+
+  const signUpIndividual = useCallback(
+    async (input: SignUpIndividualInput) => {
+      await userApi.signUpIndividual(input)
+      await loginWithCredentials(input.username, input.password)
+    },
+    [loginWithCredentials],
+  )
+
+  const signUpBusiness = useCallback(
+    async (input: SignUpBusinessInput) => {
+      await userApi.signUpBusiness(input)
+      await loginWithCredentials(input.username, input.password)
+    },
+    [loginWithCredentials],
+  )
+
+  const logoutAuth = useCallback(async () => {
+    const token = auth?.accessToken
+    try {
+      if (token) await userApi.logout(token)
+    } catch {
+      // 실 로그아웃 호출이 실패해도(네트워크 등) 로컬 로그아웃은 항상 진행한다
+    } finally {
+      clearAuth()
+      setAuth(null)
+    }
+  }, [auth])
 
   // 실제 performance-service의 공연/회차를 mock 목록에 추가로 불러온다.
   // 백엔드가 꺼져 있거나 실패해도 mock 데이터만으로 앱은 정상 동작해야 하므로 조용히 무시한다.
@@ -102,8 +195,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
     }
   }, [])
 
-  const userId = role === 'BUYER' ? BUYER_ID : SELLER_ID
-  const user = api.getUser(userId)
+  const userId = auth ? String(auth.user.userId) : null
+  const user = userId ? api.getUser(userId) : undefined
 
   const withRefresh = useCallback(
     <TArgs extends unknown[], TReturn>(fn: (...args: TArgs) => TReturn) =>
@@ -117,14 +210,20 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   const value = useMemo<AppContextValue>(() => {
     return {
-      role,
+      role: roleState,
       setRole,
       userId,
-      userName: user?.name ?? '사용자',
+      userName: auth?.user.username ?? '게스트',
       points: user?.points ?? 0,
       version,
       refresh,
       performancesLoaded,
+      authUser: auth?.user ?? null,
+      authLoading,
+      loginWithCredentials,
+      signUpIndividual,
+      signUpBusiness,
+      logoutAuth,
       heldSeat,
       holdSeat,
       releaseSeat,
@@ -147,7 +246,25 @@ export function AppProvider({ children }: { children: ReactNode }) {
       runPointReward: withRefresh(api.runPointReward.bind(api)),
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [role, version, userId, user?.name, user?.points, refresh, performancesLoaded, withRefresh, heldSeat, holdSeat, releaseSeat])
+  }, [
+    roleState,
+    setRole,
+    version,
+    userId,
+    user?.points,
+    refresh,
+    performancesLoaded,
+    auth,
+    authLoading,
+    loginWithCredentials,
+    signUpIndividual,
+    signUpBusiness,
+    logoutAuth,
+    withRefresh,
+    heldSeat,
+    holdSeat,
+    releaseSeat,
+  ])
 
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>
 }

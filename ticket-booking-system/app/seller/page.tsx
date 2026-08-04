@@ -1,51 +1,110 @@
 'use client'
 
-import { useMemo, useState, type ChangeEvent } from 'react'
+import { useEffect, useMemo, useState, type ChangeEvent } from 'react'
 import Link from 'next/link'
 import { Plus, Pencil, Trash2, DollarSign, Users, Minus } from 'lucide-react'
 import { useApp } from '@/lib/store'
 import { api } from '@/lib/api'
 import { formatKRW } from '@/lib/domain'
-import { performanceApi, PerformanceApiError } from '@/lib/performance-api'
-import { HALL_OPTIONS, registerPerformanceExtras } from '@/lib/performance-extras'
+import { performanceApi, PerformanceApiError, imagesApi } from '@/lib/performance-api'
+import { registerPerformanceExtras } from '@/lib/performance-extras'
+import { venueApi, type VenueSummary, type HallSummary, type HallDirectoryEntry } from '@/lib/venue-api'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { PerformanceStatusBadge } from '@/components/status-badges'
+import { LoginRequired } from '@/components/login-required'
 import type { Zone } from '@/lib/types'
 
 export default function SellerPage() {
   const {
     role,
+    userId,
     version,
     refresh,
     sellerCancelPerformance,
     updatePerformance,
     deletePerformance,
+    authUser,
+    authLoading,
   } = useApp()
   void version
   const [submitting, setSubmitting] = useState(false)
   const [isUploadingPoster, setIsUploadingPoster] = useState(false)
   const [posterUploadError, setPosterUploadError] = useState<string | null>(null)
+  /** 수정/삭제 버튼이 실 API 호출 중인 공연 id — 중복 클릭 방지용 */
+  const [actionPendingId, setActionPendingId] = useState<string | null>(null)
+
+  const [venues, setVenues] = useState<VenueSummary[]>([])
+  const [halls, setHalls] = useState<HallSummary[]>([])
+  const [hallsLoading, setHallsLoading] = useState(false)
+  // 공연 카드에 hall 이름을 보여주기 위한 hallId → hall/venue 이름 조회 캐시.
+  // "hall 단건 조회" API가 없어서(venue_id로만 조회 가능) 전체를 한 번에 모아서 씀.
+  const [hallDirectory, setHallDirectory] = useState<Map<number, HallDirectoryEntry> | null>(null)
+
+  useEffect(() => {
+    venueApi.list().then(setVenues).catch(() => setVenues([]))
+    venueApi.hallDirectory().then(setHallDirectory).catch(() => setHallDirectory(null))
+  }, [])
 
   const performances = useMemo(() => {
     const all = api.listPerformances()
-    return all.filter((performance) => performance.sellerId === api.getUser('u_seller')?.id)
-  }, [version])
+    // 실 공연(숫자 id)은 백엔드 응답에 sellerId가 없어서 소유권을 알 수 없다 — 필터링하지
+    // 않고 전부 보여준다(BE-요청: PerformanceDetailResponse.sellerId 추가). mock 공연(문자열
+    // id, 현재는 없음)만 소유권으로 거른다.
+    return all.filter((performance) => /^\d+$/.test(performance.id) || performance.sellerId === userId)
+  }, [version, userId])
 
   const [draftMode, setDraftMode] = useState(false)
-  const [form, setForm] = useState({
+  const [form, setForm] = useState<{
+    title: string
+    description: string
+    runtime: string
+    startDate: string
+    endDate: string
+    ticketOpenAt: string
+    venueId: number | null
+    hallId: number | null
+    posterUrl: string
+    category: string
+  }>({
     title: '',
     description: '',
     runtime: '120',
     startDate: '2026-08-01',
     endDate: '2026-08-02',
     ticketOpenAt: '2026-07-21 12:00:00',
-    hallId: 'h1',
+    venueId: null,
+    hallId: null,
     posterUrl: '',
     category: '콘서트',
   })
+
+  // venue 선택이 바뀌면 그 venue의 hall 목록을 새로 불러오고, 이전에 고른 hall 선택은 초기화한다.
+  useEffect(() => {
+    if (form.venueId == null) {
+      setHalls([])
+      return
+    }
+    let cancelled = false
+    setHallsLoading(true)
+    venueApi
+      .halls(form.venueId)
+      .then((result) => {
+        if (!cancelled) setHalls(result)
+      })
+      .catch(() => {
+        if (!cancelled) setHalls([])
+      })
+      .finally(() => {
+        if (!cancelled) setHallsLoading(false)
+      })
+    return () => {
+      cancelled = true
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [form.venueId])
   const [sessions, setSessions] = useState([
     { sessionNum: '1', actor: '', performanceStartAt: '2026-08-01 19:00:00' },
   ])
@@ -92,27 +151,22 @@ export default function SellerPage() {
     setPosterUploadError(null)
 
     try {
-      const response = await fetch('/api/s3/presigned-url', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          fileName: file.name,
-          contentType: file.type || 'application/octet-stream',
-        }),
-      })
+      const { uploadUrl, objectKey } = await imagesApi.getUploadUrl(
+        file.name,
+        file.type || 'application/octet-stream',
+      )
 
-      const data = await response.json()
-      if (!response.ok) {
-        throw new Error(data.error || '이미지 업로드 준비에 실패했습니다.')
-      }
-
-      await fetch(data.uploadUrl, {
+      const uploadResponse = await fetch(uploadUrl, {
         method: 'PUT',
         headers: { 'Content-Type': file.type || 'application/octet-stream' },
         body: file,
       })
 
-      setForm((prev) => ({ ...prev, posterUrl: data.publicUrl }))
+      if (!uploadResponse.ok) {
+        throw new Error('S3 업로드에 실패했습니다.')
+      }
+
+      setForm((prev) => ({ ...prev, posterUrl: imagesApi.toDisplayUrl(objectKey) }))
     } catch (error) {
       setPosterUploadError(error instanceof Error ? error.message : '이미지 업로드에 실패했습니다.')
     } finally {
@@ -121,14 +175,21 @@ export default function SellerPage() {
     }
   }
 
-  const selectedHall = HALL_OPTIONS.find((hall) => hall.localHallId === form.hallId)
-  const selectedHallLabel = selectedHall?.label ?? '공연장 선택'
+  const selectedVenueLabel = venues.find((v) => v.venueId === form.venueId)?.venueName ?? '공연장(venue) 선택'
+  const selectedHallLabel = halls.find((h) => h.hallId === form.hallId)?.hallName ?? (hallsLoading ? '불러오는 중...' : '홀 선택')
 
   // 실제 performance-service(v2 등록 API)로 공연을 등록한다.
-  // 좌석 배치도 데이터가 있는 3개 공연장(HALL_OPTIONS)만 지원 — lib/performance-extras.ts 참고.
   async function handleCreatePerformance() {
+    if (!authUser) {
+      alert('로그인이 필요합니다.')
+      return
+    }
     if (!form.title.trim()) {
       alert('공연 제목을 입력해 주세요.')
+      return
+    }
+    if (form.hallId == null) {
+      alert('공연장을 선택해 주세요.')
       return
     }
 
@@ -146,25 +207,27 @@ export default function SellerPage() {
       return
     }
 
-    const hallOption = HALL_OPTIONS.find((h) => h.localHallId === form.hallId) ?? HALL_OPTIONS[0]
-
     setSubmitting(true)
     try {
-      await performanceApi.register({
-        title: form.title,
-        description: form.description,
-        runtime: Number(form.runtime),
-        startDate: form.startDate,
-        endDate: form.endDate,
-        ticketOpenAt: form.ticketOpenAt,
-        hallId: hallOption.backendHallId,
-        sessions: sessions.map((session) => ({
-          sessionNum: Number(session.sessionNum) || 1,
-          actor: session.actor,
-          performanceStartAt: session.performanceStartAt,
-        })),
-        seatPrices: prices.map((p) => ({ zone: p.zone, price: p.price })),
-      })
+      await performanceApi.register(
+        {
+          title: form.title,
+          description: form.description,
+          runtime: Number(form.runtime),
+          startDate: form.startDate,
+          endDate: form.endDate,
+          ticketOpenAt: form.ticketOpenAt,
+          hallId: form.hallId,
+          postUrl: form.posterUrl,
+          sessions: sessions.map((session) => ({
+            sessionNum: Number(session.sessionNum) || 1,
+            actor: session.actor,
+            performanceStartAt: session.performanceStartAt,
+          })),
+          seatPrices: prices.map((p) => ({ zone: p.zone, price: p.price })),
+        },
+        authUser.userId,
+      )
 
       // 등록 응답엔 performanceId가 안 내려오므로, title로 목록을 다시 조회해서 찾는다.
       const list = await performanceApi.list()
@@ -174,7 +237,6 @@ export default function SellerPage() {
         registerPerformanceExtras(form.title, {
           posterUrl: form.posterUrl,
           category: form.category,
-          hallId: hallOption.localHallId,
           zonePrices: Object.fromEntries(prices.map((p) => [p.zone, p.price])),
         })
         api.importRealPerformances([{ real: created, sessions: realSessions }])
@@ -189,7 +251,8 @@ export default function SellerPage() {
         startDate: '2026-08-01',
         endDate: '2026-08-02',
         ticketOpenAt: '2026-07-21 12:00:00',
-        hallId: 'h1',
+        venueId: null,
+        hallId: null,
         posterUrl: '',
         category: '콘서트',
       })
@@ -203,6 +266,61 @@ export default function SellerPage() {
     }
   }
 
+  // 실 백엔드(PUT /api/performances/{id})로 먼저 반영하고, 성공하면 로컬 mock db도 같은
+  // 내용으로 갱신해서 화면에 바로 보이게 한다(재조회 없이). 예전엔 이 mock 갱신만 하고
+  // 실 백엔드는 전혀 안 건드려서, 새로고침하면 변경사항이 조용히 사라지는 버그가 있었다.
+  async function handleUpdatePerformance(performance: (typeof performances)[number]) {
+    if (!authUser) {
+      alert('로그인이 필요합니다.')
+      return
+    }
+    const nextTitle = `${performance.title} (수정됨)`
+    const nextDescription = `${performance.description}\n\n[수정됨]`
+    setActionPendingId(performance.id)
+    try {
+      await performanceApi.update(
+        Number(performance.id),
+        {
+          title: nextTitle,
+          description: nextDescription,
+          runtime: performance.runtime,
+          startDate: performance.startDate,
+          endDate: performance.endDate,
+          ticketOpenAt: performance.ticketOpenAt,
+          // performance.hallId는 이제 실 hallId를 그대로 담고 있음(mock 매핑 아님)
+          hallId: Number(performance.hallId),
+        },
+        authUser.userId,
+      )
+      updatePerformance(performance.id, { title: nextTitle, description: nextDescription })
+    } catch (e) {
+      const message = e instanceof PerformanceApiError ? e.message : '공연 수정에 실패했습니다.'
+      alert(message)
+    } finally {
+      setActionPendingId(null)
+    }
+  }
+
+  async function handleDeletePerformance(performance: (typeof performances)[number]) {
+    if (!authUser) {
+      alert('로그인이 필요합니다.')
+      return
+    }
+    if (!confirm(`"${performance.title}"을(를) 삭제하시겠습니까?`)) return
+    setActionPendingId(performance.id)
+    try {
+      await performanceApi.delete(Number(performance.id), authUser.userId)
+      deletePerformance(performance.id)
+    } catch (e) {
+      const message = e instanceof PerformanceApiError ? e.message : '공연 삭제에 실패했습니다.'
+      alert(message)
+    } finally {
+      setActionPendingId(null)
+    }
+  }
+
+  if (authLoading) return null
+  if (!authUser) return <LoginRequired message="공연 관리는 로그인 후 이용할 수 있습니다." />
   if (role !== 'SELLER') {
     return (
       <div className="mx-auto max-w-5xl px-4 py-10">
@@ -241,14 +359,34 @@ export default function SellerPage() {
               <Input placeholder="공연 제목" value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} />
               <Input placeholder="카테고리" value={form.category} onChange={(e) => setForm({ ...form, category: e.target.value })} />
               <Input placeholder="러닝타임(분)" type="number" value={form.runtime} onChange={(e) => setForm({ ...form, runtime: e.target.value })} />
-              <Select value={form.hallId} onValueChange={(value) => value && setForm({ ...form, hallId: value })}>
+              <Select
+                value={form.venueId != null ? String(form.venueId) : ''}
+                onValueChange={(value) =>
+                  value && setForm({ ...form, venueId: Number(value), hallId: null })
+                }
+              >
                 <SelectTrigger className="w-full">
+                  <span>{selectedVenueLabel}</span>
+                </SelectTrigger>
+                <SelectContent>
+                  {venues.map((venue) => (
+                    <SelectItem key={venue.venueId} value={String(venue.venueId)}>
+                      {venue.venueName}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <Select
+                value={form.hallId != null ? String(form.hallId) : ''}
+                onValueChange={(value) => value && setForm({ ...form, hallId: Number(value) })}
+              >
+                <SelectTrigger className="w-full" disabled={form.venueId == null}>
                   <span>{selectedHallLabel}</span>
                 </SelectTrigger>
                 <SelectContent>
-                  {HALL_OPTIONS.map((hall) => (
-                    <SelectItem key={hall.localHallId} value={hall.localHallId}>
-                      {hall.label}
+                  {halls.map((hall) => (
+                    <SelectItem key={hall.hallId} value={String(hall.hallId)}>
+                      {hall.hallName}
                     </SelectItem>
                   ))}
                 </SelectContent>
@@ -401,7 +539,7 @@ export default function SellerPage() {
                 <div>
                   <h2 className="font-semibold">{performance.title}</h2>
                   <p className="mt-1 text-sm text-muted-foreground">
-                    {HALL_OPTIONS.find((hall) => hall.localHallId === performance.hallId)?.label ?? '공연장 정보 없음'}
+                    {hallDirectory?.get(Number(performance.hallId))?.hallName ?? '공연장 정보 없음'}
                   </p>
                   <p className="mt-1 text-sm text-muted-foreground">{performance.category}</p>
                 </div>
@@ -421,15 +559,20 @@ export default function SellerPage() {
                 <Button asChild size="sm" variant="outline">
                   <Link href={`/performances/${performance.id}`}>상세 보기</Link>
                 </Button>
-                <Button size="sm" variant="outline" onClick={() => {
-                  updatePerformance(performance.id, {
-                    title: `${performance.title} (수정됨)`,
-                    description: `${performance.description}\n\n[수정됨]`,
-                  })
-                }}>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={actionPendingId === performance.id}
+                  onClick={() => handleUpdatePerformance(performance)}
+                >
                   <Pencil className="mr-1 size-3.5" />수정
                 </Button>
-                <Button size="sm" variant="outline" onClick={() => deletePerformance(performance.id)}>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={actionPendingId === performance.id}
+                  onClick={() => handleDeletePerformance(performance)}
+                >
                   <Trash2 className="mr-1 size-3.5" />삭제
                 </Button>
                 {performance.status !== 'CANCELLED' && (

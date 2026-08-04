@@ -20,7 +20,7 @@ import { useApp } from '@/lib/store'
 import { api } from '@/lib/api'
 import { formatKRW, formatDay, formatTime } from '@/lib/domain'
 import type { Performance, PerformanceSession, Zone } from '@/lib/types'
-import { standbyApi, standbyErrorMessage, STANDBY_OFFER_TTL_SECONDS, STANDBY_USER_ID } from '@/lib/standby-api'
+import { standbyApi, standbyErrorMessage, STANDBY_OFFER_TTL_SECONDS } from '@/lib/standby-api'
 import { standbyStore } from '@/lib/standby-store'
 
 /** 대기순번 매칭으로 배정된 비지정석은 좌석 선택 단계가 없어 2단계(가격 선택 → 결제)로 시작 */
@@ -62,7 +62,7 @@ export function WaitlistPaymentDialog({
   session: PerformanceSession
   onSettled: () => void
 }) {
-  const { userId, createOrder, points } = useApp()
+  const { createOrder, points, authUser } = useApp()
   const [remaining, setRemaining] = useState(() => remainingSeconds(heldSince))
   const [processing, setProcessing] = useState(false)
   const [step, setStep] = useState<'price' | 'pay'>('price')
@@ -91,6 +91,10 @@ export function WaitlistPaymentDialog({
   }
 
   function handlePay(method: string) {
+    if (!authUser) {
+      toast.error('로그인이 필요합니다.')
+      return
+    }
     if (expired) {
       toast.error('결제 제한 시간이 지났습니다.')
       return
@@ -100,7 +104,7 @@ export function WaitlistPaymentDialog({
       // 실제 결제/발권 API는 ticket·order 도메인 소관이라 이 가이드 범위 밖 —
       // 지금은 프론트 mock 주문 생성 로직을 그대로 재사용한다.
       createOrder({
-        buyerId: userId,
+        buyerId: String(authUser.userId),
         performanceId: performance.id,
         sessionId: session.id,
         selections: [{ zone, quantity: 1 }],
@@ -108,7 +112,7 @@ export function WaitlistPaymentDialog({
         fromWaitlist: true,
         pointsUsed,
       })
-      standbyStore.remove(userId, standbyId)
+      standbyStore.remove(String(authUser.userId), standbyId)
       toast.success('결제가 완료되었습니다.', {
         description: '우선 예매가 확정되어 발권되었습니다.',
       })
@@ -122,10 +126,14 @@ export function WaitlistPaymentDialog({
   }
 
   async function handleCancel() {
+    if (!authUser) {
+      toast.error('로그인이 필요합니다.')
+      return
+    }
     setProcessing(true)
     try {
-      await standbyApi.cancelZone(standbyId, zone, STANDBY_USER_ID)
-      standbyStore.removeZone(userId, standbyId, zone)
+      await standbyApi.cancelZone(standbyId, zone, authUser.userId)
+      standbyStore.removeZone(String(authUser.userId), standbyId, zone)
       toast.info('우선 예매를 취소했습니다.', {
         description: '대기열에서 취소 처리되었습니다.',
       })

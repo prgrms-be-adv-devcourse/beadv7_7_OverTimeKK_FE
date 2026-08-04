@@ -1,6 +1,6 @@
 'use client'
 
-import { useMemo } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import Image from 'next/image'
 import Link from 'next/link'
 import { notFound } from 'next/navigation'
@@ -9,6 +9,7 @@ import { BookingPanel } from '@/components/booking-panel'
 import { PerformanceStatusBadge } from '@/components/status-badges'
 import { useApp } from '@/lib/store'
 import { api } from '@/lib/api'
+import { venueApi } from '@/lib/venue-api'
 import { formatDate, formatDateTime } from '@/lib/domain'
 
 export function PerformanceDetailClient({ id }: { id: string }) {
@@ -20,6 +21,23 @@ export function PerformanceDetailClient({ id }: { id: string }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id, version])
 
+  // hall 이름 조회("단건 조회" API가 없어 전체 캐시에서 찾음) — hook이라 조건부 return보다
+  // 먼저 호출해야 한다.
+  const [hallName, setHallName] = useState<string | null>(null)
+  useEffect(() => {
+    if (!performance) return
+    let cancelled = false
+    venueApi
+      .hallDirectory()
+      .then((directory) => {
+        if (!cancelled) setHallName(directory.get(Number(performance.hallId))?.hallName ?? null)
+      })
+      .catch(() => {})
+    return () => {
+      cancelled = true
+    }
+  }, [performance])
+
   // 숫자 ID(실제 performance-service 공연)는 앱 시작 시 비동기로 불러오므로,
   // 그 fetch가 끝나기 전엔 "없는 공연"으로 단정하지 않고 기다린다 — 안 그러면
   // 직접 URL 진입/새로고침 시 실제로 존재하는 공연도 404로 잘못 처리된다.
@@ -29,8 +47,6 @@ export function PerformanceDetailClient({ id }: { id: string }) {
     }
     return notFound()
   }
-
-  const hall = api.listHalls().find((h) => h.id === performance.hallId)
 
   return (
     <div className="mx-auto max-w-6xl px-4 py-6">
@@ -69,7 +85,7 @@ export function PerformanceDetailClient({ id }: { id: string }) {
                 <div className="flex items-center gap-2 text-muted-foreground">
                   <MapPin className="size-4 shrink-0" />
                   <span>
-                    {hall?.name} · {hall?.location}
+                    {hallName ?? '공연장 정보 불러오는 중...'}
                   </span>
                 </div>
                 <div className="flex items-center gap-2 text-muted-foreground">

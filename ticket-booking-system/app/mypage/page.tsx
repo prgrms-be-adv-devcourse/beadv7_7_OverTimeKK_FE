@@ -16,9 +16,10 @@ import {
 } from '@/components/ui/dialog'
 import Link from 'next/link'
 import { orderApi, OrderApiError, type OrderHistoryItem } from '@/lib/order-api'
+import { LoginRequired } from '@/components/login-required'
 
 export default function MyPage() {
-  const { userId, role, version } = useApp()
+  const { userId, role, version, authUser, authLoading } = useApp()
   const [selectedPointId, setSelectedPointId] = useState<string | null>(null)
   const [selectedOrderId, setSelectedOrderId] = useState<number | null>(null)
 
@@ -28,10 +29,11 @@ export default function MyPage() {
   const [refreshTick, setRefreshTick] = useState(0)
 
   useEffect(() => {
+    if (!authUser) return
     let cancelled = false
     setOrdersLoading(true)
     orderApi
-      .getOrderHistory()
+      .getOrderHistory(authUser.userId)
       .then((data) => {
         if (!cancelled) setOrders(data)
       })
@@ -45,9 +47,9 @@ export default function MyPage() {
     return () => {
       cancelled = true
     }
-  }, [refreshTick])
+  }, [refreshTick, authUser])
 
-  const points = useMemo(() => api.listPoints(userId), [userId, version])
+  const points = useMemo(() => (userId ? api.listPoints(userId) : []), [userId, version])
 
   const selectedOrder = selectedOrderId
     ? orders.find((o) => o.orderId === selectedOrderId) ?? null
@@ -57,6 +59,8 @@ export default function MyPage() {
     ? points.find((p) => p.id === selectedPointId) ?? null
     : null
 
+  if (authLoading) return null
+  if (!authUser) return <LoginRequired message="마이페이지는 로그인 후 이용할 수 있습니다." />
   if (role !== 'BUYER') {
     return (
       <div className="mx-auto max-w-5xl px-4 py-10">
@@ -75,7 +79,7 @@ export default function MyPage() {
           </div>
           <div className="flex items-center gap-2 rounded-full bg-warning/10 px-3 py-2 text-warning">
             <Coins className="size-4" />
-            <span className="font-semibold">{formatKRW(api.getUser(userId)?.points ?? 0)}</span>
+            <span className="font-semibold">{formatKRW((userId && api.getUser(userId)?.points) || 0)}</span>
           </div>
         </div>
       </div>
