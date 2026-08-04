@@ -6,7 +6,7 @@ import { Plus, Pencil, Trash2, DollarSign, Users, Minus } from 'lucide-react'
 import { useApp } from '@/lib/store'
 import { api } from '@/lib/api'
 import { formatKRW } from '@/lib/domain'
-import { performanceApi, PerformanceApiError } from '@/lib/performance-api'
+import { performanceApi, PerformanceApiError, imagesApi } from '@/lib/performance-api'
 import { HALL_OPTIONS, registerPerformanceExtras } from '@/lib/performance-extras'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -92,27 +92,22 @@ export default function SellerPage() {
     setPosterUploadError(null)
 
     try {
-      const response = await fetch('/api/s3/presigned-url', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          fileName: file.name,
-          contentType: file.type || 'application/octet-stream',
-        }),
-      })
+      const { uploadUrl, objectKey } = await imagesApi.getUploadUrl(
+        file.name,
+        file.type || 'application/octet-stream',
+      )
 
-      const data = await response.json()
-      if (!response.ok) {
-        throw new Error(data.error || '이미지 업로드 준비에 실패했습니다.')
-      }
-
-      await fetch(data.uploadUrl, {
+      const uploadResponse = await fetch(uploadUrl, {
         method: 'PUT',
         headers: { 'Content-Type': file.type || 'application/octet-stream' },
         body: file,
       })
 
-      setForm((prev) => ({ ...prev, posterUrl: data.publicUrl }))
+      if (!uploadResponse.ok) {
+        throw new Error('S3 업로드에 실패했습니다.')
+      }
+
+      setForm((prev) => ({ ...prev, posterUrl: imagesApi.toDisplayUrl(objectKey) }))
     } catch (error) {
       setPosterUploadError(error instanceof Error ? error.message : '이미지 업로드에 실패했습니다.')
     } finally {
@@ -158,6 +153,7 @@ export default function SellerPage() {
         endDate: form.endDate,
         ticketOpenAt: form.ticketOpenAt,
         hallId: hallOption.backendHallId,
+        postUrl: form.posterUrl,
         sessions: sessions.map((session) => ({
           sessionNum: Number(session.sessionNum) || 1,
           actor: session.actor,

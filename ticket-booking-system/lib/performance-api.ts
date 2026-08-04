@@ -14,7 +14,7 @@
  * /api/performances/detail 계열을 쓴다(요청 필드가 더 적어서 그대로 유지).
  */
 
-const BASE_URL = process.env.NEXT_PUBLIC_PERFORMANCE_API_BASE_URL ?? 'http://localhost:8083'
+export const BASE_URL = process.env.NEXT_PUBLIC_PERFORMANCE_API_BASE_URL ?? 'http://localhost:8083'
 
 /**
  * 실제 인증이 아직 없어 등록 요청에 쓸 숫자 사용자(판매자) ID.
@@ -90,6 +90,7 @@ export interface RegisterPerformanceInput {
   endDate: string
   ticketOpenAt: string
   hallId: number
+  postUrl: string
   sessions: { sessionNum: number; actor: string; performanceStartAt: string }[]
   seatPrices: { zone: string; price: number }[]
 }
@@ -137,10 +138,46 @@ export const performanceApi = {
           endDate: input.endDate,
           ticketOpenAt: input.ticketOpenAt,
           hallId: input.hallId,
+          postUrl: input.postUrl,
         },
         sessionRequests: input.sessions,
         seatPriceRequests: input.seatPrices,
       }),
     }).then(() => undefined)
+  },
+}
+
+export interface ImageUploadUrl {
+  uploadUrl: string
+  objectKey: string
+}
+
+// performance-service application.properties의 cloud.aws.s3.bucket / cloud.aws.region 값.
+// S3ImageService의 조회용 presigned URL(createReadUrl)은 주석 처리되어 미구현 상태라
+// 업로드된 객체는 버킷 직접 URL로 조회한다.
+const S3_BUCKET = 'team01-reseat-bucket'
+const S3_REGION = 'ap-northeast-2'
+
+export const imagesApi = {
+  /**
+   * POST /api/images/upload-url — 포스터 등 이미지의 S3 presigned PUT URL 발급.
+   * S3ImageController가 ImgUploadUrlResponse를 ApiResponse envelope 없이 그대로 반환하므로
+   * (다른 performance-service 엔드포인트와 다름) request<T> 헬퍼를 쓰지 않는다.
+   */
+  async getUploadUrl(fileName: string, contentType: string): Promise<ImageUploadUrl> {
+    const res = await fetch(`${BASE_URL}/api/images/upload-url`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ fileName, contentType }),
+    })
+    if (!res.ok) {
+      throw new Error('이미지 업로드 준비에 실패했습니다.')
+    }
+    return res.json() as Promise<ImageUploadUrl>
+  },
+
+  /** presigned PUT URL로 업로드한 이미지의 공개 조회 URL */
+  toDisplayUrl(objectKey: string): string {
+    return `https://${S3_BUCKET}.s3.${S3_REGION}.amazonaws.com/${objectKey}`
   },
 }
