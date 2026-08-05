@@ -112,6 +112,8 @@ export interface StandbyZoneRank {
   zone: Zone
   rank: number
   isHeld: boolean
+  /** 매칭(isHeld) 시 배정된 실 티켓 id — 실 결제(orderApi.createOrder)에 그대로 넘긴다 */
+  ticketId: number | null
 }
 
 export interface StandbyDetail {

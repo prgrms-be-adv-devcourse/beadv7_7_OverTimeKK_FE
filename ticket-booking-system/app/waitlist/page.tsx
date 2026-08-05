@@ -37,7 +37,9 @@ export default function WaitlistPage() {
   const payingEntry = payingStandbyId
     ? entries.find((e) => e.record.standbyId === payingStandbyId) ?? null
     : null
-  const payingZone = payingEntry?.zoneRanks.find((z) => z.isHeld)?.zone
+  const payingHeldZoneRank = payingEntry?.zoneRanks.find((z) => z.isHeld)
+  const payingZone = payingHeldZoneRank?.zone
+  const payingTicketId = payingHeldZoneRank?.ticketId
   const payingPerf = payingEntry ? api.getPerformance(payingEntry.record.performanceId) : undefined
   const payingSession = payingEntry
     ? api.listSessions(payingEntry.record.performanceId).find((s) => s.id === payingEntry.record.sessionId)
@@ -238,12 +240,13 @@ export default function WaitlistPage() {
         </DialogContent>
       </Dialog>
 
-      {payingEntry && payingZone && payingPerf && payingSession && (
+      {payingEntry && payingZone && payingTicketId && payingPerf && payingSession && (
         <WaitlistPaymentDialog
           open={payingEntry != null}
           onOpenChange={(v) => !v && setPayingStandbyId(null)}
           standbyId={payingEntry.record.standbyId}
           zone={payingZone}
+          ticketId={payingTicketId}
           heldSince={payingEntry.record.heldSince}
           performance={payingPerf}
           session={payingSession}

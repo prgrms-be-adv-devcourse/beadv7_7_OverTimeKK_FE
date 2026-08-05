@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useMemo, useState } from 'react'
-import { Ticket, CheckCircle2, Coins } from 'lucide-react'
+import { Loader2, Coins } from 'lucide-react'
 import { toast } from 'sonner'
 import {
   Dialog,
@@ -14,11 +14,12 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { ZoneBadge } from '@/components/status-badges'
 import { BookingSteps } from '@/components/booking-steps'
-import { TossPayment } from '@/components/toss-payment'
+import { RealTossPayment } from '@/components/real-toss-payment'
 import { WaitlistDialog } from '@/components/waitlist-dialog'
 import { useApp } from '@/lib/store'
 import { orderApi, OrderApiError } from '@/lib/order-api'
 import { performanceApi, type RealTicket } from '@/lib/performance-api'
+import { writePendingPaymentLedger } from '@/lib/pending-payment'
 import { canWaitlistZone, formatKRW, formatDay, formatTime } from '@/lib/domain'
 import type { Performance, PerformanceSession, Zone } from '@/lib/types'
 
@@ -50,7 +51,7 @@ export function BookingDialog({
   session: PerformanceSession
   zoneRows: ZoneRow[]
 }) {
-  const { createOrder, points, heldSeat, holdSeat, releaseSeat, authUser } = useApp()
+  const { points, heldSeat, holdSeat, releaseSeat, authUser } = useApp()
 
   const heldSeatsForThisSession = useMemo<Record<Zone, string[]>>(() => {
     const empty: Record<Zone, string[]> = { VIP: [], R: [], S: [], A: [] }
@@ -64,14 +65,19 @@ export function BookingDialog({
     return empty
   }, [heldSeat, performance.id, session.id])
 
-  const [step, setStep] = useState<'select' | 'price' | 'pay' | 'done'>('select')
+  const [step, setStep] = useState<'select' | 'price' | 'pay'>('select')
   const [activeZone, setActiveZone] = useState<Zone | null>(null)
   const [selectedSeats, setSelectedSeats] = useState<Record<Zone, string[]>>(heldSeatsForThisSession)
   const [waitlistOpen, setWaitlistOpen] = useState(false)
   const [waitlistPrefillZones, setWaitlistPrefillZones] = useState<Zone[]>([])
   const [pointsInput, setPointsInput] = useState('0')
-  const [realOrder, setRealOrder] = useState<{ orderId: number; paymentId: number } | null>(null)
   const [selectedRealTicket, setSelectedRealTicket] = useState<{ ticketId: number; price: number } | null>(null)
+  const [pendingPayment, setPendingPayment] = useState<{
+    paymentId: number
+    tossOrderId: string
+    amount: number
+  } | null>(null)
+  const [pendingPaymentError, setPendingPaymentError] = useState<string | null>(null)
 
   // performance-service/v2로 등록된 실제 공연은 숫자 ID를 그대로 쓴다(mock은 'p_xxx' 형태)
   const isRealPerformance = /^\d+$/.test(performance.id)
@@ -116,7 +122,8 @@ export function BookingDialog({
     if (open) {
       setStep('select')
       setSelectedSeats(heldSeatsForThisSession)
-      setRealOrder(null)
+      setPendingPayment(null)
+      setPendingPaymentError(null)
       setSelectedRealTicket(null)
       setWaitlistOpen(false)
       setWaitlistPrefillZones([])
@@ -128,8 +135,8 @@ export function BookingDialog({
       setActiveZone(firstAvailable)
     }
     // zoneRows는 의도적으로 deps에서 뺐다: 결제 성공 시 잔여석이 줄면서 zoneRows 참조가
-    // 바뀌는데, 이걸 deps에 넣으면 다이얼로그가 열려 있는 동안(step==='done'이어도) 이 effect가
-    // 다시 실행돼서 결제 완료 화면이 곧바로 좌석 선택 화면으로 리셋돼버린다. 다이얼로그가
+    // 바뀌는데, 이걸 deps에 넣으면 다이얼로그가 열려 있는 동안(step==='pay'여도) 이 effect가
+    // 다시 실행돼서 결제 진행 화면이 곧바로 좌석 선택 화면으로 리셋돼버린다. 다이얼로그가
     // "열릴 때"만 초기화하면 되므로 open만 감시한다.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open])
@@ -242,49 +249,55 @@ export function BookingDialog({
     holdSeat({ performanceId: performance.id, sessionId: session.id, zone, seatId })
   }
 
-  // 실 주문(order-service)이 결제 성공/실패를 가르는 유일한 기준이다. 예전에는 mock
-  // createOrder가 먼저 "성공"으로 화면을 넘기고 이 호출은 결과와 무관한 그림자 호출이었는데,
-  // 그러면 실제로 결제가 실패해도 화면은 항상 성공으로 보였다 — 지금은 이 호출 하나로 합친다.
-  async function handlePay(method: string) {
-    if (!authUser) {
-      toast.error('로그인이 필요합니다.')
+  // 실 토스 결제창은 페이지 이탈(리다이렉트)을 동반해서, 결제 승인(confirm)은 여기서 못 하고
+  // /payment/success에서 이어받는다. 이 다이얼로그는 'pay' 단계에 들어서면 실 주문(order-service)의
+  // createOrder→pay만 미리 해둬서 토스 결제창을 열 orderId/paymentId를 준비하는 역할까지만 한다.
+  useEffect(() => {
+    if (step !== 'pay' || pendingPayment) return
+    if (!authUser || !selectedRealTicket) {
+      setPendingPaymentError('선택한 좌석 정보를 찾을 수 없습니다. 좌석을 다시 선택해 주세요.')
       return
     }
-    if (!selectedRealTicket) {
-      toast.error('선택한 좌석 정보를 찾을 수 없습니다. 좌석을 다시 선택해 주세요.')
-      return
-    }
-    try {
-      const created = await orderApi.createOrder(selectedRealTicket.ticketId, authUser.userId)
-      const paid = await orderApi.pay(created.orderId, selectedRealTicket.price)
-      const confirmed = await orderApi.confirm(paid.paymentId, paid.transactionKey)
-      setRealOrder({ orderId: created.orderId, paymentId: confirmed.paymentId })
-      setStep('done')
-      releaseSeat()
-      toast.success('결제가 완료되어 티켓이 발권되었습니다.')
-
-      // 포인트 잔액을 읽어오는 실 API가 아직 없어서(다음 정리 대상), 마이페이지에 보이는
-      // 포인트 잔액/내역은 여전히 mock 장부로 관리한다. 실 결제가 이미 끝난 뒤의 부가 처리라
-      // 여기서 실패해도 이미 완료된 결제 자체를 되돌리지 않는다.
+    let cancelled = false
+    setPendingPaymentError(null)
+    ;(async () => {
       try {
+        // usedPoint는 의도적으로 안 넘긴다: 여기서 넘기면 백엔드 PointService가 실 포인트
+        // 잔액에서 차감을 시도하는데, 실 포인트 적립/조회 API가 아직 없어서 실 잔액은 사실상
+        // 항상 0에 가깝다 — 잘못 넘기면 포인트 사용 자체가 실패로 막힘. 그래서 토스 결제창엔
+        // 항상 좌석 정가(gross)를 그대로 청구하고, "포인트 사용" 할인은 지금처럼 mock 장부에만
+        // 반영한다(finalAmount는 화면 표시/마이페이지 mock 기록용).
+        const created = await orderApi.createOrder(selectedRealTicket.ticketId, authUser.userId)
+        const paid = await orderApi.pay(created.orderId, selectedRealTicket.price)
+        if (cancelled) return
+
+        // 포인트 잔액을 읽어오는 실 API가 아직 없어서(다음 정리 대상), 마이페이지 포인트 내역은
+        // 여전히 mock 장부로 관리한다. 결제창으로 넘어가면 이 다이얼로그의 로컬 상태가 사라지므로
+        // /payment/success가 이어받을 수 있게 paymentId 기준으로 남겨둔다(실 결제 완료와 무관한
+        // 부가 정보라 여기서 실패해도 결제 진행 자체는 막지 않음).
         const selectedSeatPayload = seatSelections.map(({ zone, labels }) => ({ zone, seatLabels: labels }))
-        createOrder({
+        writePendingPaymentLedger(paid.paymentId, {
           buyerId: String(authUser.userId),
           performanceId: performance.id,
           sessionId: session.id,
           selections: selectedSeatPayload.map(({ zone, seatLabels }) => ({ zone, quantity: seatLabels.length })),
           selectedSeats: selectedSeatPayload,
-          method,
           pointsUsed,
         })
+
+        setPendingPayment({ paymentId: paid.paymentId, tossOrderId: paid.orderId, amount: paid.amount })
+        releaseSeat()
       } catch (e) {
-        console.warn('포인트 장부(mock) 갱신 실패 — 결제 자체는 완료됨:', e)
+        if (cancelled) return
+        const message = e instanceof OrderApiError ? `${e.code ?? ''} ${e.message}`.trim() : '주문 생성에 실패했습니다.'
+        setPendingPaymentError(message)
       }
-    } catch (e) {
-      const message = e instanceof OrderApiError ? `${e.code ?? ''} ${e.message}`.trim() : '결제에 실패했습니다.'
-      toast.error(message)
+    })()
+    return () => {
+      cancelled = true
     }
-  }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [step, pendingPayment, authUser, selectedRealTicket])
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -508,61 +521,24 @@ export function BookingDialog({
               </DialogDescription>
             </DialogHeader>
             <BookingSteps steps={STEP_LABELS} current={2} />
-            <TossPayment amount={finalAmount} onApproved={handlePay} />
+            {pendingPaymentError ? (
+              <p className="text-sm text-destructive">{pendingPaymentError}</p>
+            ) : pendingPayment ? (
+              <RealTossPayment
+                amount={pendingPayment.amount}
+                orderId={pendingPayment.tossOrderId}
+                paymentId={pendingPayment.paymentId}
+                orderName={`${performance.title} ${session.sessionNum}회차`}
+                customerName={authUser?.username}
+              />
+            ) : (
+              <div className="flex items-center justify-center gap-2 py-8 text-sm text-muted-foreground">
+                <Loader2 className="size-4 animate-spin" />
+                주문 생성 중...
+              </div>
+            )}
             <Button variant="ghost" size="sm" onClick={() => setStep('price')}>
               이전
-            </Button>
-          </>
-        )}
-
-        {step === 'done' && (
-          <>
-            <DialogHeader>
-              <DialogTitle className="flex items-center gap-2">
-                <CheckCircle2 className="size-5 text-success" />
-                예매 완료
-              </DialogTitle>
-              <DialogDescription>선택한 고정 좌석으로 티켓이 발권되었습니다.</DialogDescription>
-            </DialogHeader>
-            <div className="space-y-3 rounded-lg border border-border bg-secondary/40 p-4">
-              <div className="flex items-center gap-2">
-                <Ticket className="size-4 text-primary" />
-                <p className="text-sm font-semibold">{performance.title}</p>
-              </div>
-              <p className="text-xs text-muted-foreground">
-                {session.sessionNum}회차 · {formatDay(session.performanceStartAt)}{' '}
-                {formatTime(session.performanceStartAt)}
-              </p>
-              <div className="space-y-1">
-                {seatSelections.map((item) => (
-                  <div key={item.zone} className="flex items-center justify-between text-sm">
-                    <span className="flex items-center gap-1.5">
-                      <ZoneBadge zone={item.zone} /> {item.labels.length}매
-                    </span>
-                    <span className="text-muted-foreground">
-                      {item.labels.map((label) => formatSelectedSeatLabel(label)).join(', ')}
-                    </span>
-                  </div>
-                ))}
-              </div>
-              {pointsUsed > 0 && (
-                <div className="flex items-center justify-between text-sm text-warning">
-                  <span>포인트 사용</span>
-                  <span>-{formatKRW(pointsUsed)}</span>
-                </div>
-              )}
-              <div className="flex items-center justify-between border-t border-border pt-2 text-sm font-semibold">
-                <span>결제금액</span>
-                <span>{formatKRW(finalAmount)}</span>
-              </div>
-            </div>
-            {realOrder && (
-              <p className="text-xs text-muted-foreground">
-                실제 order-service 주문 #{realOrder.orderId} · 결제 #{realOrder.paymentId} 승인 완료
-              </p>
-            )}
-            <Button className="w-full" onClick={() => onOpenChange(false)}>
-              확인
             </Button>
           </>
         )}
