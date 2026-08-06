@@ -1,5 +1,6 @@
 'use client'
 
+import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import Image from 'next/image'
 import { CalendarDays, MapPin, Clock } from 'lucide-react'
@@ -7,10 +8,23 @@ import { Card, CardContent } from '@/components/ui/card'
 import { PerformanceStatusBadge } from '@/components/status-badges'
 import { formatDate, formatKRW } from '@/lib/domain'
 import { api } from '@/lib/api'
+import { venueApi } from '@/lib/venue-api'
 import type { Performance } from '@/lib/types'
 
 export function PerformanceCard({ performance }: { performance: Performance }) {
-  const hall = api.listHalls().find((h) => h.id === performance.hallId)
+  const [hallName, setHallName] = useState<string | null>(null)
+  useEffect(() => {
+    let cancelled = false
+    venueApi
+      .hallDirectory()
+      .then((directory) => {
+        if (!cancelled) setHallName(directory.get(Number(performance.hallId))?.hallName ?? null)
+      })
+      .catch(() => {})
+    return () => {
+      cancelled = true
+    }
+  }, [performance.hallId])
   const prices = api.listZonePrices(performance.id)
   const minPrice = prices.length > 0 ? Math.min(...prices.map((p) => p.price)) : 0
 
@@ -37,7 +51,7 @@ export function PerformanceCard({ performance }: { performance: Performance }) {
           <div className="space-y-1 text-xs text-muted-foreground">
             <p className="flex items-center gap-1.5">
               <MapPin className="size-3.5 shrink-0" />
-              {hall?.name ?? '미정'}
+              {hallName ?? '미정'}
             </p>
             <p className="flex items-center gap-1.5">
               <CalendarDays className="size-3.5 shrink-0" />

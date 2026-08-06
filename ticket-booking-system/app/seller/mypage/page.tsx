@@ -7,16 +7,18 @@ import { api } from '@/lib/api'
 import { formatKRW } from '@/lib/domain'
 import { Button } from '@/components/ui/button'
 import Link from 'next/link'
+import { LoginRequired } from '@/components/login-required'
 
 export default function SellerMyPage() {
-  const { role, userId, version } = useApp()
+  const { role, userId, version, authUser, authLoading } = useApp()
   void version
 
-  const orders = useMemo(() => api.listSellerOrders(userId), [userId, version])
-  const payments = useMemo(() => api.listSellerPayments(userId), [userId, version])
-  const settlements = useMemo(() => api.listSettlements(userId), [userId, version])
-  const points = useMemo(() => api.listPoints(userId), [userId, version])
+  const orders = useMemo(() => (userId ? api.listSellerOrders(userId) : []), [userId, version])
+  const settlements = useMemo(() => (userId ? api.listSettlements(userId) : []), [userId, version])
+  const points = useMemo(() => (userId ? api.listPoints(userId) : []), [userId, version])
 
+  if (authLoading) return null
+  if (!authUser) return <LoginRequired message="판매자 마이페이지는 로그인 후 이용할 수 있습니다." />
   if (role !== 'SELLER') {
     return (
       <div className="mx-auto max-w-5xl px-4 py-10">
@@ -38,7 +40,7 @@ export default function SellerMyPage() {
           </div>
           <div className="flex items-center gap-2 rounded-full bg-warning/10 px-3 py-2 text-warning">
             <Coins className="size-4" />
-            <span className="font-semibold">{formatKRW(api.getUser(userId)?.points ?? 0)}</span>
+            <span className="font-semibold">{formatKRW((userId && api.getUser(userId)?.points) || 0)}</span>
           </div>
         </div>
       </div>

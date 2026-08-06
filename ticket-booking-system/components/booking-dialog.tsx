@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useMemo, useState } from 'react'
-import { Ticket, CheckCircle2, Coins } from 'lucide-react'
+import { Loader2, Coins } from 'lucide-react'
 import { toast } from 'sonner'
 import {
   Dialog,
@@ -14,14 +14,14 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { ZoneBadge } from '@/components/status-badges'
 import { BookingSteps } from '@/components/booking-steps'
-import { TossPayment } from '@/components/toss-payment'
+import { RealTossPayment } from '@/components/real-toss-payment'
 import { WaitlistDialog } from '@/components/waitlist-dialog'
 import { useApp } from '@/lib/store'
-import { api } from '@/lib/api'
 import { orderApi, OrderApiError } from '@/lib/order-api'
 import { performanceApi, type RealTicket } from '@/lib/performance-api'
+import { writePendingPaymentLedger } from '@/lib/pending-payment'
 import { canWaitlistZone, formatKRW, formatDay, formatTime } from '@/lib/domain'
-import type { Order, Performance, PerformanceSession, Zone } from '@/lib/types'
+import type { Performance, PerformanceSession, Zone } from '@/lib/types'
 
 const STEP_LABELS = ['좌석 선택', '가격 선택', '결제']
 
@@ -51,7 +51,7 @@ export function BookingDialog({
   session: PerformanceSession
   zoneRows: ZoneRow[]
 }) {
-  const { createOrder, userId, points, heldSeat, holdSeat, releaseSeat } = useApp()
+  const { points, heldSeat, holdSeat, releaseSeat, authUser } = useApp()
 
   const heldSeatsForThisSession = useMemo<Record<Zone, string[]>>(() => {
     const empty: Record<Zone, string[]> = { VIP: [], R: [], S: [], A: [] }
@@ -65,15 +65,19 @@ export function BookingDialog({
     return empty
   }, [heldSeat, performance.id, session.id])
 
-  const [step, setStep] = useState<'select' | 'price' | 'pay' | 'done'>('select')
+  const [step, setStep] = useState<'select' | 'price' | 'pay'>('select')
   const [activeZone, setActiveZone] = useState<Zone | null>(null)
   const [selectedSeats, setSelectedSeats] = useState<Record<Zone, string[]>>(heldSeatsForThisSession)
-  const [order, setOrder] = useState<Order | null>(null)
   const [waitlistOpen, setWaitlistOpen] = useState(false)
   const [waitlistPrefillZones, setWaitlistPrefillZones] = useState<Zone[]>([])
   const [pointsInput, setPointsInput] = useState('0')
-  const [realOrder, setRealOrder] = useState<{ orderId: number; paymentId: number } | null>(null)
   const [selectedRealTicket, setSelectedRealTicket] = useState<{ ticketId: number; price: number } | null>(null)
+  const [pendingPayment, setPendingPayment] = useState<{
+    paymentId: number
+    tossOrderId: string
+    amount: number
+  } | null>(null)
+  const [pendingPaymentError, setPendingPaymentError] = useState<string | null>(null)
 
   // performance-service/v2로 등록된 실제 공연은 숫자 ID를 그대로 쓴다(mock은 'p_xxx' 형태)
   const isRealPerformance = /^\d+$/.test(performance.id)
@@ -118,8 +122,8 @@ export function BookingDialog({
     if (open) {
       setStep('select')
       setSelectedSeats(heldSeatsForThisSession)
-      setOrder(null)
-      setRealOrder(null)
+      setPendingPayment(null)
+      setPendingPaymentError(null)
       setSelectedRealTicket(null)
       setWaitlistOpen(false)
       setWaitlistPrefillZones([])
@@ -131,8 +135,8 @@ export function BookingDialog({
       setActiveZone(firstAvailable)
     }
     // zoneRows는 의도적으로 deps에서 뺐다: 결제 성공 시 잔여석이 줄면서 zoneRows 참조가
-    // 바뀌는데, 이걸 deps에 넣으면 다이얼로그가 열려 있는 동안(step==='done'이어도) 이 effect가
-    // 다시 실행돼서 결제 완료 화면이 곧바로 좌석 선택 화면으로 리셋돼버린다. 다이얼로그가
+    // 바뀌는데, 이걸 deps에 넣으면 다이얼로그가 열려 있는 동안(step==='pay'여도) 이 effect가
+    // 다시 실행돼서 결제 진행 화면이 곧바로 좌석 선택 화면으로 리셋돼버린다. 다이얼로그가
     // "열릴 때"만 초기화하면 되므로 open만 감시한다.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open])
@@ -161,52 +165,44 @@ export function BookingDialog({
     setPointsInput(String(clamped))
   }
 
-  const hall = useMemo(() => api.getHall(performance.hallId), [performance.hallId])
-  const inventory = useMemo(() => api.listInventory(session.id), [session.id, zoneRows])
-
+  // 좌석 배치도는 hall의 정적 배치(mock)가 아니라, 그 회차·구역에 실제 발행된 티켓
+  // (realTickets, seatRow/seatNum 포함)을 기준으로 그린다 — venue/hall 쪽엔 좌석 하나하나의
+  // 배치를 조회하는 API가 없고(BE-요청-hall과-구역가격-조회API 참고), 어차피 결제에 쓸 수
+  // 있는 좌석은 발행된 티켓뿐이라 이게 곧 유일한 정답 데이터다.
   const seatMap = useMemo(() => {
-    if (!activeZone || !hall) return []
-    const occupied = new Set(inventory.find((i) => i.zone === activeZone)?.occupiedSeats ?? [])
-    const realByPosition = new Map(realTickets.map((t) => [`${t.seatRow}-${t.seatNum}`, t]))
-    const layout = hall.seatLayout[activeZone] ?? []
-    const seats: Array<{
-      id: string
-      rowLabel: string
-      col: number
-      sold: boolean
-      selected: boolean
-      realTicket?: RealTicket
-    }> = []
-
-    for (const rowLayout of layout) {
-      for (let colIndex = 0; colIndex < rowLayout.count; colIndex += 1) {
-        const seatId = `${activeZone}-${rowLayout.row}-${colIndex + 1}`
-        if (isRealPerformance) {
-          // 실제 발행된 티켓(POST /api/tickets/select/seat) 기준으로만 판단 — 그 좌석에
-          // 해당하는 티켓이 없거나 AVAILABLE이 아니면 매진 처리.
-          const real = realByPosition.get(`${rowLayout.row}-${colIndex + 1}`)
-          seats.push({
-            id: seatId,
-            rowLabel: rowLayout.row,
-            col: colIndex + 1,
-            sold: !real || real.ticketStatus !== 'AVAILABLE',
-            selected: (selectedSeats[activeZone] ?? []).includes(seatId),
-            realTicket: real,
-          })
-        } else {
-          seats.push({
-            id: seatId,
-            rowLabel: rowLayout.row,
-            col: colIndex + 1,
-            sold: occupied.has(seatId),
-            selected: (selectedSeats[activeZone] ?? []).includes(seatId),
-          })
-        }
+    if (!activeZone) return []
+    const sorted = realTickets
+      .slice()
+      .sort((a, b) => a.seatRow.localeCompare(b.seatRow) || Number(a.seatNum) - Number(b.seatNum))
+    const colByRow = new Map<string, number>()
+    return sorted.map((ticket) => {
+      const col = (colByRow.get(ticket.seatRow) ?? 0) + 1
+      colByRow.set(ticket.seatRow, col)
+      const seatId = `${activeZone}-${ticket.seatRow}-${col}`
+      return {
+        id: seatId,
+        rowLabel: ticket.seatRow,
+        col,
+        sold: ticket.ticketStatus !== 'AVAILABLE',
+        selected: (selectedSeats[activeZone] ?? []).includes(seatId),
+        realTicket: ticket,
       }
-    }
+    })
+  }, [activeZone, selectedSeats, realTickets])
 
-    return seats
-  }, [activeZone, hall, inventory, selectedSeats, isRealPerformance, realTickets])
+  /** 좌석판을 줄 단위로 그리기 위한 그룹핑(등장 순서 = seatMap 정렬 순서 = 행 알파벳순 유지) */
+  const seatRows = useMemo(() => {
+    const order: string[] = []
+    const byRow = new Map<string, typeof seatMap>()
+    for (const seat of seatMap) {
+      if (!byRow.has(seat.rowLabel)) {
+        byRow.set(seat.rowLabel, [])
+        order.push(seat.rowLabel)
+      }
+      byRow.get(seat.rowLabel)!.push(seat)
+    }
+    return order.map((row) => ({ row, seats: byRow.get(row)! }))
+  }, [seatMap])
 
   function selectZone(zone: Zone) {
     const target = zoneRows.find((z) => z.zone === zone)
@@ -253,45 +249,55 @@ export function BookingDialog({
     holdSeat({ performanceId: performance.id, sessionId: session.id, zone, seatId })
   }
 
-  function handlePay(method: string) {
-    try {
-      const selectedSeatPayload = seatSelections.map(({ zone, labels }) => ({ zone, seatLabels: labels }))
-      const { order } = createOrder({
-        buyerId: userId,
-        performanceId: performance.id,
-        sessionId: session.id,
-        selections: selectedSeatPayload.map(({ zone, seatLabels }) => ({ zone, quantity: seatLabels.length })),
-        selectedSeats: selectedSeatPayload,
-        method,
-        pointsUsed,
-      })
-      setOrder(order)
-      setStep('done')
-      releaseSeat()
-      toast.success('결제가 완료되어 티켓이 발권되었습니다.')
+  // 실 토스 결제창은 페이지 이탈(리다이렉트)을 동반해서, 결제 승인(confirm)은 여기서 못 하고
+  // /payment/success에서 이어받는다. 이 다이얼로그는 'pay' 단계에 들어서면 실 주문(order-service)의
+  // createOrder→pay만 미리 해둬서 토스 결제창을 열 orderId/paymentId를 준비하는 역할까지만 한다.
+  useEffect(() => {
+    if (step !== 'pay' || pendingPayment) return
+    if (!authUser || !selectedRealTicket) {
+      setPendingPaymentError('선택한 좌석 정보를 찾을 수 없습니다. 좌석을 다시 선택해 주세요.')
+      return
+    }
+    let cancelled = false
+    setPendingPaymentError(null)
+    ;(async () => {
+      try {
+        // usedPoint는 의도적으로 안 넘긴다: 여기서 넘기면 백엔드 PointService가 실 포인트
+        // 잔액에서 차감을 시도하는데, 실 포인트 적립/조회 API가 아직 없어서 실 잔액은 사실상
+        // 항상 0에 가깝다 — 잘못 넘기면 포인트 사용 자체가 실패로 막힘. 그래서 토스 결제창엔
+        // 항상 좌석 정가(gross)를 그대로 청구하고, "포인트 사용" 할인은 지금처럼 mock 장부에만
+        // 반영한다(finalAmount는 화면 표시/마이페이지 mock 기록용).
+        const created = await orderApi.createOrder(selectedRealTicket.ticketId, authUser.userId)
+        const paid = await orderApi.pay(created.orderId, selectedRealTicket.price)
+        if (cancelled) return
 
-      if (isRealPerformance && selectedRealTicket) {
-        void syncRealOrder(selectedRealTicket)
+        // 포인트 잔액을 읽어오는 실 API가 아직 없어서(다음 정리 대상), 마이페이지 포인트 내역은
+        // 여전히 mock 장부로 관리한다. 결제창으로 넘어가면 이 다이얼로그의 로컬 상태가 사라지므로
+        // /payment/success가 이어받을 수 있게 paymentId 기준으로 남겨둔다(실 결제 완료와 무관한
+        // 부가 정보라 여기서 실패해도 결제 진행 자체는 막지 않음).
+        const selectedSeatPayload = seatSelections.map(({ zone, labels }) => ({ zone, seatLabels: labels }))
+        writePendingPaymentLedger(paid.paymentId, {
+          buyerId: String(authUser.userId),
+          performanceId: performance.id,
+          sessionId: session.id,
+          selections: selectedSeatPayload.map(({ zone, seatLabels }) => ({ zone, quantity: seatLabels.length })),
+          selectedSeats: selectedSeatPayload,
+          pointsUsed,
+        })
+
+        setPendingPayment({ paymentId: paid.paymentId, tossOrderId: paid.orderId, amount: paid.amount })
+        releaseSeat()
+      } catch (e) {
+        if (cancelled) return
+        const message = e instanceof OrderApiError ? `${e.code ?? ''} ${e.message}`.trim() : '주문 생성에 실패했습니다.'
+        setPendingPaymentError(message)
       }
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : '결제에 실패했습니다.')
+    })()
+    return () => {
+      cancelled = true
     }
-  }
-
-  // 실제 공연에 한해, 화면에서 고른 좌석의 실제 ticketId(좌석 선택 시 GET /api/tickets로 이미
-  // 확보해둔 값)로 order-service에도 주문/결제를 남겨본다 — mock 예매와는 별개의 그림자 호출이라
-  // 실패해도 화면 표시엔 영향 없음.
-  async function syncRealOrder(ticket: { ticketId: number; price: number }) {
-    try {
-      const created = await orderApi.createOrder(ticket.ticketId)
-      const paid = await orderApi.pay(created.orderId, ticket.price)
-      const confirmed = await orderApi.confirm(paid.paymentId, paid.transactionKey)
-      setRealOrder({ orderId: created.orderId, paymentId: confirmed.paymentId })
-    } catch (e) {
-      const message = e instanceof OrderApiError ? `${e.code} ${e.message}` : String(e)
-      console.warn('실제 order-service 동기화 실패(화면 표시엔 영향 없음):', message)
-    }
-  }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [step, pendingPayment, authUser, selectedRealTicket])
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -356,36 +362,38 @@ export function BookingDialog({
                   </div>
 
                   <div className="space-y-2">
-                    {(hall?.seatLayout[activeZone] ?? []).map((rowLayout) => {
-                      const rowSeats = seatMap.filter((seat) => seat.rowLabel === rowLayout.row)
-                      return (
-                        <div key={rowLayout.row} className="flex items-center gap-2">
-                          <span className="w-8 text-center text-xs font-semibold text-muted-foreground">{rowLayout.row}행</span>
-                          <div
-                            className="grid flex-1 gap-2"
-                            style={{ gridTemplateColumns: `repeat(${rowLayout.count}, minmax(0, 1fr))` }}
-                          >
-                            {rowSeats.map((seat) => (
-                              <button
-                                key={seat.id}
-                                type="button"
-                                onClick={() => toggleSeat(activeZone, seat.id, seat.realTicket)}
-                                className={`h-10 rounded-md border text-sm font-medium transition-colors ${
-                                  seat.sold
-                                    ? 'cursor-not-allowed border-muted bg-muted text-muted-foreground'
-                                    : seat.selected
-                                      ? 'border-primary bg-primary text-primary-foreground shadow-sm'
-                                      : 'border-border bg-background hover:border-primary/40 hover:bg-primary/5'
-                                }`}
-                                disabled={seat.sold}
-                              >
-                                {seat.col}
-                              </button>
-                            ))}
-                          </div>
+                    {seatRows.map(({ row, seats }) => (
+                      <div key={row} className="flex items-center gap-2">
+                        <span className="w-8 text-center text-xs font-semibold text-muted-foreground">{row}행</span>
+                        <div
+                          className="grid flex-1 gap-2"
+                          style={{ gridTemplateColumns: `repeat(${seats.length}, minmax(0, 1fr))` }}
+                        >
+                          {seats.map((seat) => (
+                            <button
+                              key={seat.id}
+                              type="button"
+                              onClick={() => toggleSeat(activeZone, seat.id, seat.realTicket)}
+                              className={`h-10 rounded-md border text-sm font-medium transition-colors ${
+                                seat.sold
+                                  ? 'cursor-not-allowed border-muted bg-muted text-muted-foreground'
+                                  : seat.selected
+                                    ? 'border-primary bg-primary text-primary-foreground shadow-sm'
+                                    : 'border-border bg-background hover:border-primary/40 hover:bg-primary/5'
+                              }`}
+                              disabled={seat.sold}
+                            >
+                              {seat.col}
+                            </button>
+                          ))}
                         </div>
-                      )
-                    })}
+                      </div>
+                    ))}
+                    {seatRows.length === 0 && !realTicketsLoading && (
+                      <p className="py-4 text-center text-sm text-muted-foreground">
+                        이 구역에는 발행된 좌석이 없습니다.
+                      </p>
+                    )}
                   </div>
                 </div>
               )}
@@ -513,59 +521,24 @@ export function BookingDialog({
               </DialogDescription>
             </DialogHeader>
             <BookingSteps steps={STEP_LABELS} current={2} />
-            <TossPayment amount={finalAmount} onApproved={handlePay} />
+            {pendingPaymentError ? (
+              <p className="text-sm text-destructive">{pendingPaymentError}</p>
+            ) : pendingPayment ? (
+              <RealTossPayment
+                amount={pendingPayment.amount}
+                orderId={pendingPayment.tossOrderId}
+                paymentId={pendingPayment.paymentId}
+                orderName={`${performance.title} ${session.sessionNum}회차`}
+                customerName={authUser?.username}
+              />
+            ) : (
+              <div className="flex items-center justify-center gap-2 py-8 text-sm text-muted-foreground">
+                <Loader2 className="size-4 animate-spin" />
+                주문 생성 중...
+              </div>
+            )}
             <Button variant="ghost" size="sm" onClick={() => setStep('price')}>
               이전
-            </Button>
-          </>
-        )}
-
-        {step === 'done' && order && (
-          <>
-            <DialogHeader>
-              <DialogTitle className="flex items-center gap-2">
-                <CheckCircle2 className="size-5 text-success" />
-                예매 완료
-              </DialogTitle>
-              <DialogDescription>선택한 고정 좌석으로 티켓이 발권되었습니다.</DialogDescription>
-            </DialogHeader>
-            <div className="space-y-3 rounded-lg border border-border bg-secondary/40 p-4">
-              <div className="flex items-center gap-2">
-                <Ticket className="size-4 text-primary" />
-                <p className="text-sm font-semibold">{performance.title}</p>
-              </div>
-              <p className="text-xs text-muted-foreground">
-                {session.sessionNum}회차 · {formatDay(session.performanceStartAt)}{' '}
-                {formatTime(session.performanceStartAt)}
-              </p>
-              <div className="space-y-1">
-                {order.items.map((it) => (
-                  <div key={it.zone} className="flex items-center justify-between text-sm">
-                    <span className="flex items-center gap-1.5">
-                      <ZoneBadge zone={it.zone} /> {it.quantity}매
-                    </span>
-                    <span className="text-muted-foreground">{it.seatLabels.join(', ')}</span>
-                  </div>
-                ))}
-              </div>
-              {!!order.pointsUsed && (
-                <div className="flex items-center justify-between text-sm text-warning">
-                  <span>포인트 사용</span>
-                  <span>-{formatKRW(order.pointsUsed)}</span>
-                </div>
-              )}
-              <div className="flex items-center justify-between border-t border-border pt-2 text-sm font-semibold">
-                <span>결제금액</span>
-                <span>{formatKRW(order.totalAmount - (order.pointsUsed ?? 0))}</span>
-              </div>
-            </div>
-            {realOrder && (
-              <p className="text-xs text-muted-foreground">
-                실제 order-service 주문 #{realOrder.orderId} · 결제 #{realOrder.paymentId} 승인 완료
-              </p>
-            )}
-            <Button className="w-full" onClick={() => onOpenChange(false)}>
-              확인
             </Button>
           </>
         )}

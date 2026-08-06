@@ -15,7 +15,7 @@ import { cn } from '@/lib/utils'
 import type { Performance, PerformanceSession, Zone } from '@/lib/types'
 
 export function BookingPanel({ performance }: { performance: Performance }) {
-  const { version, role } = useApp()
+  const { version, role, authUser } = useApp()
   void version
 
   // performance-service/v2로 등록된 실제 공연은 숫자 ID를 그대로 쓴다(mock은 'p_xxx' 형태)
@@ -50,28 +50,38 @@ export function BookingPanel({ performance }: { performance: Performance }) {
 
   // real 공연은 잔여석도 mock 재고가 아니라 POST /api/tickets/select/seat로 구역별 실제
   // AVAILABLE 티켓 수를 세어서 계산한다 — mock 재고는 시드값 고정이라 실제 구매/취소가
-  // 반영되지 않는다. null이면 아직 조회 전(로딩 중)이라는 뜻.
-  const [realRemaining, setRealRemaining] = useState<Record<string, number> | null>(null)
+  // 반영되지 않는다. 이 응답엔 셀러가 등록한 실제 구역가격(price)도 같이 내려오므로 잔여석과
+  // 함께 저장해서 mock 가격(performance-extras.ts 정적 데이터) 대신 쓴다.
+  // null이면 아직 조회 전(로딩 중)이라는 뜻.
+  const [realZoneStats, setRealZoneStats] = useState<Record<string, { remaining: number; price: number }> | null>(
+    null,
+  )
 
   useEffect(() => {
     if (!isRealPerformance || !selectedSession) {
-      setRealRemaining(null)
+      setRealZoneStats(null)
       return
     }
     let cancelled = false
-    setRealRemaining(null)
+    setRealZoneStats(null)
     Promise.all(
       prices.map((price) =>
         performanceApi
           .selectSeatZone(Number(performance.id), selectedSession.sessionNum, price.zone)
           .then(
             (result) =>
-              [price.zone, result.sessionZones.filter((t) => t.ticketStatus === 'AVAILABLE').length] as const,
+              [
+                price.zone,
+                {
+                  remaining: result.sessionZones.filter((t) => t.ticketStatus === 'AVAILABLE').length,
+                  price: result.price,
+                },
+              ] as const,
           )
-          .catch(() => [price.zone, 0] as const),
+          .catch(() => [price.zone, { remaining: 0, price: price.price }] as const),
       ),
     ).then((entries) => {
-      if (!cancelled) setRealRemaining(Object.fromEntries(entries))
+      if (!cancelled) setRealZoneStats(Object.fromEntries(entries))
     })
     return () => {
       cancelled = true
@@ -83,15 +93,16 @@ export function BookingPanel({ performance }: { performance: Performance }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isRealPerformance, selectedSession?.sessionNum, performance.id, version, bookingOpen])
 
-  const realRemainingLoading = isRealPerformance && realRemaining === null
+  const realRemainingLoading = isRealPerformance && realZoneStats === null
 
   const zoneRows = prices
     .slice()
     .sort((a, b) => b.price - a.price)
     .map((price) => {
       if (isRealPerformance) {
-        const remaining = realRemaining?.[price.zone] ?? 0
-        return { zone: price.zone as Zone, price: price.price, remaining, total: remaining }
+        const stat = realZoneStats?.[price.zone]
+        const remaining = stat?.remaining ?? 0
+        return { zone: price.zone as Zone, price: stat?.price ?? price.price, remaining, total: remaining }
       }
       const inv = inventory.find((i) => i.zone === price.zone)
       const remaining = inv ? inv.total - inv.sold : 0
@@ -217,12 +228,14 @@ export function BookingPanel({ performance }: { performance: Performance }) {
               size="lg"
               variant="secondary"
               onClick={() => setWaitlistOpen(true)}
-              disabled={role !== 'BUYER'}
+              disabled={!authUser || role !== 'BUYER'}
             >
               취소표 대기 신청
             </Button>
             <p className="text-center text-xs text-muted-foreground">
-              전 구역 매진 · 원하는 구역을 최대 3개까지 선택해 대기하세요
+              {!authUser
+                ? '로그인 후 대기 신청할 수 있습니다'
+                : '전 구역 매진 · 원하는 구역을 최대 3개까지 선택해 대기하세요'}
             </p>
           </>
         ) : (
@@ -231,15 +244,17 @@ export function BookingPanel({ performance }: { performance: Performance }) {
               className="w-full"
               size="lg"
               onClick={() => setBookingOpen(true)}
-              disabled={role !== 'BUYER'}
+              disabled={!authUser || role !== 'BUYER'}
             >
               예매하기
             </Button>
-            {role !== 'BUYER' && (
+            {!authUser ? (
+              <p className="text-center text-xs text-muted-foreground">로그인 후 예매할 수 있습니다</p>
+            ) : role !== 'BUYER' ? (
               <p className="text-center text-xs text-muted-foreground">
                 구매자로 전환하면 예매할 수 있습니다
               </p>
-            )}
+            ) : null}
           </>
         )}
       </div>

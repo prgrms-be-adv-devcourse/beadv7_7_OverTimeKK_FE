@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { CreditCard, Clock, Coins } from 'lucide-react'
+import { CreditCard, Clock, Coins, Loader2 } from 'lucide-react'
 import { toast } from 'sonner'
 import {
   Dialog,
@@ -15,12 +15,14 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { ZoneBadge } from '@/components/status-badges'
 import { BookingSteps } from '@/components/booking-steps'
-import { TossPayment } from '@/components/toss-payment'
+import { RealTossPayment } from '@/components/real-toss-payment'
 import { useApp } from '@/lib/store'
-import { api } from '@/lib/api'
+import { orderApi, OrderApiError } from '@/lib/order-api'
+import { performanceApi } from '@/lib/performance-api'
+import { writePendingPaymentLedger } from '@/lib/pending-payment'
 import { formatKRW, formatDay, formatTime } from '@/lib/domain'
 import type { Performance, PerformanceSession, Zone } from '@/lib/types'
-import { standbyApi, standbyErrorMessage, STANDBY_OFFER_TTL_SECONDS, STANDBY_USER_ID } from '@/lib/standby-api'
+import { standbyApi, standbyErrorMessage, STANDBY_OFFER_TTL_SECONDS } from '@/lib/standby-api'
 import { standbyStore } from '@/lib/standby-store'
 
 /** 대기순번 매칭으로 배정된 비지정석은 좌석 선택 단계가 없어 2단계(가격 선택 → 결제)로 시작 */
@@ -48,6 +50,7 @@ export function WaitlistPaymentDialog({
   onOpenChange,
   standbyId,
   zone,
+  ticketId,
   heldSince,
   performance,
   session,
@@ -57,16 +60,24 @@ export function WaitlistPaymentDialog({
   onOpenChange: (v: boolean) => void
   standbyId: number
   zone: Zone
+  ticketId: number
   heldSince?: string
   performance: Performance
   session: PerformanceSession
   onSettled: () => void
 }) {
-  const { userId, createOrder, points } = useApp()
+  const { points, authUser } = useApp()
   const [remaining, setRemaining] = useState(() => remainingSeconds(heldSince))
   const [processing, setProcessing] = useState(false)
   const [step, setStep] = useState<'price' | 'pay'>('price')
   const [pointsInput, setPointsInput] = useState('0')
+  const [zonePrice, setZonePrice] = useState<number | null>(null)
+  const [pendingPayment, setPendingPayment] = useState<{
+    paymentId: number
+    tossOrderId: string
+    amount: number
+  } | null>(null)
+  const [pendingPaymentError, setPendingPaymentError] = useState<string | null>(null)
 
   // 절대 만료시각(근사치) 기준으로 1초마다 남은 시간 재계산
   useEffect(() => {
@@ -77,8 +88,35 @@ export function WaitlistPaymentDialog({
     return () => clearInterval(timer)
   }, [heldSince])
 
+  // 다이얼로그가 열릴 때마다 초기화(다른 대기 건으로 다시 열릴 수 있음)
+  useEffect(() => {
+    if (open) {
+      setStep('price')
+      setPointsInput('0')
+      setPendingPayment(null)
+      setPendingPaymentError(null)
+    }
+  }, [open])
+
+  // 실 구역 가격 — mock 가격이 아니라 booking-dialog와 동일하게 performanceApi로 조회
+  useEffect(() => {
+    if (!open) return
+    let cancelled = false
+    performanceApi
+      .selectSeatZone(Number(performance.id), session.sessionNum, zone)
+      .then((result) => {
+        if (!cancelled) setZonePrice(result.price)
+      })
+      .catch((e) => {
+        if (!cancelled) console.warn('실 구역 가격 조회 실패:', e)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [open, performance.id, session.sessionNum, zone])
+
   const expired = remaining <= 0
-  const price = api.listZonePrices(performance.id).find((p) => p.zone === zone)?.price ?? 0
+  const price = zonePrice ?? 0
 
   const maxUsablePoints = Math.max(0, Math.min(points, price))
   const pointsUsed = Math.max(0, Math.min(Number(pointsInput) || 0, maxUsablePoints))
@@ -90,42 +128,55 @@ export function WaitlistPaymentDialog({
     setPointsInput(String(clamped))
   }
 
-  function handlePay(method: string) {
-    if (expired) {
-      toast.error('결제 제한 시간이 지났습니다.')
+  // 실 주문(order-service)의 createOrder→pay만 미리 해둬서 토스 결제창을 열 orderId/paymentId를
+  // 준비한다. 결제 승인(confirm)은 토스 결제창 리다이렉트 이후 /payment/success에서 처리된다 —
+  // booking-dialog와 동일한 구조(자세한 설명은 그쪽 주석 참고).
+  useEffect(() => {
+    if (step !== 'pay' || pendingPayment || expired) return
+    if (!authUser) {
+      setPendingPaymentError('로그인이 필요합니다.')
+      return
+    }
+    let cancelled = false
+    setPendingPaymentError(null)
+    ;(async () => {
+      try {
+        const created = await orderApi.createOrder(ticketId, authUser.userId, 'STANDBY')
+        const paid = await orderApi.pay(created.orderId, price)
+        if (cancelled) return
+
+        writePendingPaymentLedger(paid.paymentId, {
+          buyerId: String(authUser.userId),
+          performanceId: performance.id,
+          sessionId: session.id,
+          selections: [{ zone, quantity: 1 }],
+          fromWaitlist: true,
+          pointsUsed,
+          standbyCleanup: { userId: String(authUser.userId), standbyId },
+        })
+
+        setPendingPayment({ paymentId: paid.paymentId, tossOrderId: paid.orderId, amount: paid.amount })
+      } catch (e) {
+        if (cancelled) return
+        const message = e instanceof OrderApiError ? `${e.code ?? ''} ${e.message}`.trim() : '주문 생성에 실패했습니다.'
+        setPendingPaymentError(message)
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [step, pendingPayment, expired, authUser, ticketId, price])
+
+  async function handleCancel() {
+    if (!authUser) {
+      toast.error('로그인이 필요합니다.')
       return
     }
     setProcessing(true)
     try {
-      // 실제 결제/발권 API는 ticket·order 도메인 소관이라 이 가이드 범위 밖 —
-      // 지금은 프론트 mock 주문 생성 로직을 그대로 재사용한다.
-      createOrder({
-        buyerId: userId,
-        performanceId: performance.id,
-        sessionId: session.id,
-        selections: [{ zone, quantity: 1 }],
-        method,
-        fromWaitlist: true,
-        pointsUsed,
-      })
-      standbyStore.remove(userId, standbyId)
-      toast.success('결제가 완료되었습니다.', {
-        description: '우선 예매가 확정되어 발권되었습니다.',
-      })
-      onOpenChange(false)
-      onSettled()
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : '결제에 실패했습니다.')
-    } finally {
-      setProcessing(false)
-    }
-  }
-
-  async function handleCancel() {
-    setProcessing(true)
-    try {
-      await standbyApi.cancelZone(standbyId, zone, STANDBY_USER_ID)
-      standbyStore.removeZone(userId, standbyId, zone)
+      await standbyApi.cancelZone(standbyId, zone, authUser.userId)
+      standbyStore.removeZone(String(authUser.userId), standbyId, zone)
       toast.info('우선 예매를 취소했습니다.', {
         description: '대기열에서 취소 처리되었습니다.',
       })
@@ -239,7 +290,7 @@ export function WaitlistPaymentDialog({
               <Button variant="outline" onClick={handleCancel} disabled={processing}>
                 결제 취소
               </Button>
-              <Button onClick={() => setStep('pay')} disabled={expired}>
+              <Button onClick={() => setStep('pay')} disabled={expired || zonePrice == null}>
                 다음
               </Button>
             </DialogFooter>
@@ -248,8 +299,23 @@ export function WaitlistPaymentDialog({
 
         {step === 'pay' && (
           <>
-            <TossPayment amount={finalAmount} onApproved={handlePay} />
-            <Button variant="ghost" size="sm" onClick={() => setStep('price')} disabled={processing}>
+            {pendingPaymentError ? (
+              <p className="text-sm text-destructive">{pendingPaymentError}</p>
+            ) : pendingPayment ? (
+              <RealTossPayment
+                amount={pendingPayment.amount}
+                orderId={pendingPayment.tossOrderId}
+                paymentId={pendingPayment.paymentId}
+                orderName={`${performance.title} ${session.sessionNum}회차 (우선예매)`}
+                customerName={authUser?.username}
+              />
+            ) : (
+              <div className="flex items-center justify-center gap-2 py-8 text-sm text-muted-foreground">
+                <Loader2 className="size-4 animate-spin" />
+                주문 생성 중...
+              </div>
+            )}
+            <Button variant="ghost" size="sm" onClick={() => setStep('price')}>
               이전
             </Button>
           </>

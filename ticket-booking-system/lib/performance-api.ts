@@ -16,12 +16,6 @@
 
 export const BASE_URL = process.env.NEXT_PUBLIC_PERFORMANCE_API_BASE_URL ?? 'http://localhost:8083'
 
-/**
- * 실제 인증이 아직 없어 등록 요청에 쓸 숫자 사용자(판매자) ID.
- * lib/standby-api.ts의 STANDBY_USER_ID와 같은 임시방편 — 로그인이 붙으면 교체.
- */
-export const REGISTER_USER_ID = 1
-
 export interface RealPerformance {
   performanceId: number
   title: string
@@ -75,6 +69,8 @@ export class PerformanceApiError extends Error {
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${BASE_URL}${path}`, init)
+  // DELETE /api/performances/{id}는 ApiResponse 봉투 없이 204 No Content로 응답한다.
+  if (res.status === 204) return null as T
   const body = (await res.json()) as ApiResponse<T>
   if (!res.ok || !body.success) {
     throw new PerformanceApiError(body.message ?? '요청이 실패했습니다.', body.code, res.status)
@@ -90,9 +86,20 @@ export interface RegisterPerformanceInput {
   endDate: string
   ticketOpenAt: string
   hallId: number
+  /** S3에 업로드한 포스터 이미지의 objectKey(또는 URL). imagesApi.getUploadUrl() 참고 */
   postUrl: string
   sessions: { sessionNum: number; actor: string; performanceStartAt: string }[]
   seatPrices: { zone: string; price: number }[]
+}
+
+export interface UpdatePerformanceInput {
+  title: string
+  description: string
+  runtime: number
+  startDate: string
+  endDate: string
+  ticketOpenAt: string
+  hallId: number
 }
 
 export const performanceApi = {
@@ -124,12 +131,12 @@ export const performanceApi = {
    * POST /api/v2/performances — 공연+회차+좌석가격 등록(티켓 발행까지 한 번에).
    * 응답에 생성된 performanceId가 안 내려오므로, 호출 뒤 title로 목록을 다시 조회해서 찾아야 한다.
    */
-  register(input: RegisterPerformanceInput): Promise<void> {
+  register(input: RegisterPerformanceInput, sellerId: number): Promise<void> {
     return request<null>('/api/v2/performances', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        userId: REGISTER_USER_ID,
+        userId: sellerId,
         performanceRequest: {
           title: input.title,
           description: input.description,
@@ -144,6 +151,58 @@ export const performanceApi = {
         seatPriceRequests: input.seatPrices,
       }),
     }).then(() => undefined)
+  },
+
+  /** PUT /api/performances/{id} — 공연 기본 정보 수정. 판매자 소유 확인용 X-User-Id 헤더 필요 */
+  update(performanceId: number, input: UpdatePerformanceInput, sellerId: number): Promise<void> {
+    return request<null>(`/api/performances/${performanceId}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', 'X-User-Id': String(sellerId) },
+      body: JSON.stringify(input),
+    }).then(() => undefined)
+  },
+
+  /** DELETE /api/performances/{id} — 판매자 소유 확인용 X-User-Id 헤더 필요 */
+  delete(performanceId: number, sellerId: number): Promise<void> {
+    return request<null>(`/api/performances/${performanceId}`, {
+      method: 'DELETE',
+      headers: { 'X-User-Id': String(sellerId) },
+    }).then(() => undefined)
+  },
+}
+
+export interface ImageUploadUrl {
+  uploadUrl: string
+  objectKey: string
+}
+
+// performance-service application.properties의 cloud.aws.s3.bucket / cloud.aws.region 값.
+// S3ImageService의 조회용 presigned URL(createReadUrl)은 주석 처리되어 미구현 상태라
+// 업로드된 객체는 버킷 직접 URL로 조회한다.
+const S3_BUCKET = 'team01-reseat-bucket'
+const S3_REGION = 'ap-northeast-2'
+
+export const imagesApi = {
+  /**
+   * POST /api/images/upload-url — 포스터 등 이미지의 S3 presigned PUT URL 발급.
+   * S3ImageController가 ImgUploadUrlResponse를 ApiResponse envelope 없이 그대로 반환하므로
+   * (다른 performance-service 엔드포인트와 다름) request<T> 헬퍼를 쓰지 않는다.
+   */
+  async getUploadUrl(fileName: string, contentType: string): Promise<ImageUploadUrl> {
+    const res = await fetch(`${BASE_URL}/api/images/upload-url`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ fileName, contentType }),
+    })
+    if (!res.ok) {
+      throw new Error('이미지 업로드 준비에 실패했습니다.')
+    }
+    return res.json() as Promise<ImageUploadUrl>
+  },
+
+  /** presigned PUT URL로 업로드한 이미지의 공개 조회 URL */
+  toDisplayUrl(objectKey: string): string {
+    return `https://${S3_BUCKET}.s3.${S3_REGION}.amazonaws.com/${objectKey}`
   },
 }
 

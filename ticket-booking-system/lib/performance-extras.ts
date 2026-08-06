@@ -15,8 +15,6 @@ import type { Zone } from './types'
 export interface PerformanceExtras {
   posterUrl: string
   category: string
-  /** lib/mock-data.ts seedHalls 중 하나 (h1/h2/h3) — 좌석 배치도/정원 조회용 */
-  hallId: string
   /** 구역별 가격. 여기 없는 구역은 해당 공연에서 판매하지 않는 것으로 취급 */
   zonePrices: Partial<Record<Zone, number>>
 }
@@ -24,7 +22,6 @@ export interface PerformanceExtras {
 const DEFAULT_EXTRAS: PerformanceExtras = {
   posterUrl: '',
   category: '기타',
-  hallId: 'h1',
   zonePrices: { VIP: 120000, R: 90000, S: 60000, A: 40000 },
 }
 
@@ -36,7 +33,6 @@ const EXTRAS_BY_TITLE: Record<string, PerformanceExtras> = {
   '최종 검증 공연': {
     posterUrl: '',
     category: '기타',
-    hallId: 'h1',
     zonePrices: { VIP: 100000, R: 80000 },
   },
 }
@@ -72,16 +68,3 @@ export function registerPerformanceExtras(title: string, extras: PerformanceExtr
     // 저장 실패해도(용량 초과 등) 이번 세션 동작에는 지장 없음
   }
 }
-
-/**
- * 셀러 등록 폼에서 고를 수 있는 실제 공연장 목록.
- * backendHallId는 performance-service seed 데이터(hall.hall_id)의 실제 값,
- * localHallId는 lib/mock-data.ts seedHalls(좌석 배치도/정원 조회용)와 매칭된다.
- * 이 3개만 지원하는 이유: 백엔드에 hall 목록 조회 API가 없어서(issue 6),
- * 좌석 배치도 데이터를 프론트에 직접 옮겨둔 hall만 등록 가능하게 제한함.
- */
-export const HALL_OPTIONS: { localHallId: string; backendHallId: number; label: string }[] = [
-  { localHallId: 'h1', backendHallId: 1, label: '서울 아트센터 1홀' },
-  { localHallId: 'h2', backendHallId: 7, label: '한강 문화회관 2홀' },
-  { localHallId: 'h3', backendHallId: 13, label: '인천 공연예술관 3홀' },
-]

@@ -16,12 +16,7 @@ import { useApp } from '@/lib/store'
 import { formatDay, formatTime, ZONE_META } from '@/lib/domain'
 import { cn } from '@/lib/utils'
 import type { Performance, PerformanceSession, Zone } from '@/lib/types'
-import {
-  standbyApi,
-  standbyErrorMessage,
-  STANDBY_USER_ID,
-  toBackendPerformanceId,
-} from '@/lib/standby-api'
+import { standbyApi, standbyErrorMessage, toBackendPerformanceId } from '@/lib/standby-api'
 import { standbyStore } from '@/lib/standby-store'
 
 const MAX_ZONES = 3
@@ -41,7 +36,7 @@ export function WaitlistDialog({
   zones: Zone[]
   prefillZones?: Zone[]
 }) {
-  const { userId } = useApp()
+  const { authUser } = useApp()
   const [selected, setSelected] = useState<Zone[]>([])
   const [submitting, setSubmitting] = useState(false)
   const availableZones = zones
@@ -73,15 +68,19 @@ export function WaitlistDialog({
   }
 
   async function handleSubmit() {
+    if (!authUser) {
+      toast.error('로그인이 필요합니다.')
+      return
+    }
     setSubmitting(true)
     try {
       const result = await standbyApi.create({
-        userId: STANDBY_USER_ID,
+        userId: authUser.userId,
         performanceId: toBackendPerformanceId(performance.id),
         sessionNum: session.sessionNum,
         zones: selected,
       })
-      standbyStore.add(userId, {
+      standbyStore.add(String(authUser.userId), {
         standbyId: result.standbyId,
         performanceId: performance.id,
         sessionId: session.id,
