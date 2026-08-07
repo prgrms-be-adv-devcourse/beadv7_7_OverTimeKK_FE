@@ -25,6 +25,8 @@ export interface RealPerformance {
   endDate: string
   ticketOpenAt: string
   hallId: number
+  /** 포스터 이미지 presigned GET URL. 발급 후 1800초(30분)면 만료되므로 캐시하지 말고 매번 새로 조회할 것 */
+  postUrl: string
 }
 
 export interface RealSession {
