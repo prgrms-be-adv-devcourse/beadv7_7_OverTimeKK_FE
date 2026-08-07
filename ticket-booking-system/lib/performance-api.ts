@@ -50,6 +50,23 @@ export interface RealTicketZone {
   sessionZones: RealTicket[]
 }
 
+/** GET /api/performances/{id}/sessions/seats 응답의 sessions 배열 원소 — 회차 x 구역 한 줄 */
+export interface RealSessionSeat {
+  sessionNum: number
+  performanceStartAt: string
+  actor: string
+  zone: string
+  price: number
+  availableSeatCount: number
+}
+
+/** GET /api/performances/{id}/sessions/seats 응답 — 전체 회차 x 구역의 가격/잔여석을 한 번에 내려준다 */
+export interface RealPerformanceSessionSeats {
+  performanceId: number
+  ticketOpenAt: string
+  sessions: RealSessionSeat[]
+}
+
 /**
  * PUT /api/tickets/status/hold 응답 — 이 호출이 실제로 좌석을 5분간 hold한다(TimeLimits.orderHoldTicket5Min).
  * holdExpiredAt/holdKey는 서버가 생성한 값 그대로 order-api.ts의 createOrder에 넘겨야 한다
@@ -137,6 +154,15 @@ export const performanceApi = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ performanceId, sessionNum, zone }),
     })
+  },
+
+  /**
+   * GET /api/performances/{id}/sessions/seats — 티켓 오픈 시각 + 전체 회차 x 구역의
+   * 가격/잔여석을 한 번에 조회. 예매 패널의 회차별 구역 가격·잔여석 표시가 이 응답 하나로
+   * 충분해서, 구역마다 좌석 단위로 내려주는 selectSeatZone()을 반복 호출할 필요가 없다.
+   */
+  sessionSeats(performanceId: number): Promise<RealPerformanceSessionSeats> {
+    return request<RealPerformanceSessionSeats>(`/api/performances/${performanceId}/sessions/seats`)
   },
 
   /**

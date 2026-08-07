@@ -8,7 +8,7 @@ import { Countdown } from '@/components/countdown'
 import { BookingDialog } from '@/components/booking-dialog'
 import { WaitlistDialog } from '@/components/waitlist-dialog'
 import { api } from '@/lib/api'
-import { performanceApi } from '@/lib/performance-api'
+import { performanceApi, type RealPerformanceSessionSeats } from '@/lib/performance-api'
 import { useApp } from '@/lib/store'
 import { formatKRW, formatDay, formatTime, parseDateTime, NOW } from '@/lib/domain'
 import { cn } from '@/lib/utils'
@@ -34,11 +34,6 @@ export function BookingPanel({ performance }: { performance: Performance }) {
   const [bookingOpen, setBookingOpen] = useState(false)
   const [waitlistOpen, setWaitlistOpen] = useState(false)
 
-  const opened = api.ticketOpened(performance)
-  const openAt = parseDateTime(performance.ticketOpenAt).getTime()
-  const cancelled = performance.status === 'CANCELLED'
-  const ended = performance.status === 'ENDED'
-
   const selectedSession =
     sessions.find((s) => s.id === selectedSessionId) ?? sessions[0]
 
@@ -48,41 +43,29 @@ export function BookingPanel({ performance }: { performance: Performance }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedSession?.id, version])
 
-  // real 공연은 잔여석도 mock 재고가 아니라 POST /api/tickets/select/seat로 구역별 실제
-  // AVAILABLE 티켓 수를 세어서 계산한다 — mock 재고는 시드값 고정이라 실제 구매/취소가
-  // 반영되지 않는다. 이 응답엔 셀러가 등록한 실제 구역가격(price)도 같이 내려오므로 잔여석과
-  // 함께 저장해서 mock 가격(performance-extras.ts 정적 데이터) 대신 쓴다.
+  // real 공연은 티켓오픈 시각·회차별 구역 가격/잔여석을 GET /api/performances/{id}/sessions/seats
+  // 한 번으로 전부 받아온다 — mock 재고(db.inventory)는 시드값 고정이라 실제 구매/취소가
+  // 반영되지 않고, 예전에는 구역마다 POST /api/tickets/select/seat를 따로 호출했다.
   // null이면 아직 조회 전(로딩 중)이라는 뜻.
-  const [realZoneStats, setRealZoneStats] = useState<Record<string, { remaining: number; price: number }> | null>(
-    null,
-  )
+  const [realSessionSeats, setRealSessionSeats] = useState<RealPerformanceSessionSeats | null>(null)
 
   useEffect(() => {
-    if (!isRealPerformance || !selectedSession) {
-      setRealZoneStats(null)
+    if (!isRealPerformance) {
+      setRealSessionSeats(null)
       return
     }
     let cancelled = false
-    setRealZoneStats(null)
-    Promise.all(
-      prices.map((price) =>
-        performanceApi
-          .selectSeatZone(Number(performance.id), selectedSession.sessionNum, price.zone)
-          .then(
-            (result) =>
-              [
-                price.zone,
-                {
-                  remaining: result.sessionZones.filter((t) => t.ticketStatus === 'AVAILABLE').length,
-                  price: result.price,
-                },
-              ] as const,
-          )
-          .catch(() => [price.zone, { remaining: 0, price: price.price }] as const),
-      ),
-    ).then((entries) => {
-      if (!cancelled) setRealZoneStats(Object.fromEntries(entries))
-    })
+    setRealSessionSeats(null)
+    performanceApi
+      .sessionSeats(Number(performance.id))
+      .then((result) => {
+        if (!cancelled) setRealSessionSeats(result)
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setRealSessionSeats({ performanceId: Number(performance.id), ticketOpenAt: performance.ticketOpenAt, sessions: [] })
+        }
+      })
     return () => {
       cancelled = true
     }
@@ -91,23 +74,33 @@ export function BookingPanel({ performance }: { performance: Performance }) {
     // 아직 최신 상태가 반영되기 전 시점을 조회하게 된다 — 다이얼로그를 닫는 시점(그때는 실제
     // 동기화가 끝나 있음)에 한 번 더 조회해서 따라잡는다.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isRealPerformance, selectedSession?.sessionNum, performance.id, version, bookingOpen])
+  }, [isRealPerformance, performance.id, version, bookingOpen])
 
-  const realRemainingLoading = isRealPerformance && realZoneStats === null
+  const realRemainingLoading = isRealPerformance && realSessionSeats === null
 
-  const zoneRows = prices
-    .slice()
-    .sort((a, b) => b.price - a.price)
-    .map((price) => {
-      if (isRealPerformance) {
-        const stat = realZoneStats?.[price.zone]
-        const remaining = stat?.remaining ?? 0
-        return { zone: price.zone as Zone, price: stat?.price ?? price.price, remaining, total: remaining }
-      }
-      const inv = inventory.find((i) => i.zone === price.zone)
-      const remaining = inv ? inv.total - inv.sold : 0
-      return { zone: price.zone as Zone, price: price.price, remaining, total: inv?.total ?? 0 }
-    })
+  // real 공연은 sessions/seats 응답의 ticketOpenAt이 최신 원천이고, 로딩 전에는 merge된
+  // performance.ticketOpenAt(같은 값)으로 대체해 깜빡임 없이 표시한다.
+  const ticketOpenAt = isRealPerformance && realSessionSeats ? realSessionSeats.ticketOpenAt : performance.ticketOpenAt
+  const opened = parseDateTime(ticketOpenAt).getTime() <= NOW.getTime()
+  const openAt = parseDateTime(ticketOpenAt).getTime()
+  const cancelled = performance.status === 'CANCELLED'
+  const ended = performance.status === 'ENDED'
+
+  const zoneRows = isRealPerformance
+    ? (selectedSession && realSessionSeats
+        ? realSessionSeats.sessions.filter((s) => s.sessionNum === selectedSession.sessionNum)
+        : []
+      )
+        .map((s) => ({ zone: s.zone as Zone, price: s.price, remaining: s.availableSeatCount, total: s.availableSeatCount }))
+        .sort((a, b) => b.price - a.price)
+    : prices
+        .slice()
+        .sort((a, b) => b.price - a.price)
+        .map((price) => {
+          const inv = inventory.find((i) => i.zone === price.zone)
+          const remaining = inv ? inv.total - inv.sold : 0
+          return { zone: price.zone as Zone, price: price.price, remaining, total: inv?.total ?? 0 }
+        })
 
   const allSoldOut = !realRemainingLoading && zoneRows.length > 0 && zoneRows.every((z) => z.remaining <= 0)
 
@@ -138,7 +131,7 @@ export function BookingPanel({ performance }: { performance: Performance }) {
           <p className="text-sm font-medium text-muted-foreground">티켓 오픈까지</p>
           <Countdown target={openAt} className="mt-2 flex justify-center" />
           <p className="mt-2 text-xs text-muted-foreground">
-            {formatDay(performance.ticketOpenAt)} {formatTime(performance.ticketOpenAt)} 오픈
+            {formatDay(ticketOpenAt)} {formatTime(ticketOpenAt)} 오픈
           </p>
         </div>
       )}
