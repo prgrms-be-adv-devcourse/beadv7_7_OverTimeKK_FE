@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState, type ChangeEvent } from 'react'
 import Link from 'next/link'
-import { Plus, Pencil, Trash2, DollarSign, Users, Minus } from 'lucide-react'
+import { Plus, Trash2, DollarSign, Users, Minus } from 'lucide-react'
 import { useApp } from '@/lib/store'
 import { api } from '@/lib/api'
 import { formatKRW } from '@/lib/domain'
@@ -18,6 +18,16 @@ import { PerformanceStatusBadge } from '@/components/status-badges'
 import { LoginRequired } from '@/components/login-required'
 import type { Zone } from '@/lib/types'
 
+/** <input type="date">가 요구하는 'yyyy-MM-dd' — offsetDays만큼 오늘에서 이동한 날짜 */
+function dateOnly(offsetDays: number): string {
+  const d = new Date()
+  d.setDate(d.getDate() + offsetDays)
+  const yyyy = d.getFullYear()
+  const mm = String(d.getMonth() + 1).padStart(2, '0')
+  const dd = String(d.getDate()).padStart(2, '0')
+  return `${yyyy}-${mm}-${dd}`
+}
+
 /** 백엔드가 기대하는 'yyyy-MM-dd HH:mm:ss' 형식의 현재 시각 — 티켓 오픈일 기본값(등록 즉시 예매 테스트 가능하도록) */
 function defaultTicketOpenAt(): string {
   const now = new Date()
@@ -30,13 +40,13 @@ function defaultTicketOpenAt(): string {
 }
 
 /** 'yyyy-MM-dd HH:mm:ss' → <input type="datetime-local">이 요구하는 'yyyy-MM-ddTHH:mm' */
-function ticketOpenAtToInputValue(value: string): string {
+function dateTimeToInputValue(value: string): string {
   const [datePart, timePart = '00:00:00'] = value.split(' ')
   return `${datePart}T${timePart.slice(0, 5)}`
 }
 
 /** <input type="datetime-local"> 값('yyyy-MM-ddTHH:mm') → 백엔드가 기대하는 'yyyy-MM-dd HH:mm:ss' */
-function inputValueToTicketOpenAt(value: string): string {
+function inputValueToDateTime(value: string): string {
   const [datePart, timePart = '00:00'] = value.split('T')
   return `${datePart} ${timePart}:00`
 }
@@ -48,7 +58,6 @@ export default function SellerPage() {
     version,
     refresh,
     sellerCancelPerformance,
-    updatePerformance,
     deletePerformance,
     authUser,
     authLoading,
@@ -95,9 +104,9 @@ export default function SellerPage() {
   }>({
     title: '',
     description: '',
-    runtime: '120',
-    startDate: '2026-08-01',
-    endDate: '2026-08-02',
+    runtime: '',
+    startDate: dateOnly(0),
+    endDate: dateOnly(1),
     ticketOpenAt: defaultTicketOpenAt(),
     venueId: null,
     hallId: null,
@@ -130,7 +139,7 @@ export default function SellerPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [form.venueId])
   const [sessions, setSessions] = useState([
-    { sessionNum: '1', actor: '', performanceStartAt: '2026-08-01 19:00:00' },
+    { sessionNum: '1', actor: '', performanceStartAt: `${dateOnly(1)} 19:00:00` },
   ])
   const [priceRows, setPriceRows] = useState<Array<{ id: number; zone: Zone | ''; price: string }>>([
     { id: 1, zone: 'VIP', price: '' },
@@ -146,7 +155,7 @@ export default function SellerPage() {
       {
         sessionNum: String(prev.length + 1),
         actor: '',
-        performanceStartAt: '2026-08-02 19:00:00',
+        performanceStartAt: `${dateOnly(1)} 19:00:00`,
       },
     ])
   }
@@ -271,57 +280,22 @@ export default function SellerPage() {
       setForm({
         title: '',
         description: '',
-        runtime: '120',
-        startDate: '2026-08-01',
-        endDate: '2026-08-02',
+        runtime: '',
+        startDate: dateOnly(0),
+        endDate: dateOnly(1),
         ticketOpenAt: defaultTicketOpenAt(),
         venueId: null,
         hallId: null,
         posterUrl: '',
         category: '',
       })
-      setSessions([{ sessionNum: '1', actor: '', performanceStartAt: '2026-08-01 19:00:00' }])
+      setSessions([{ sessionNum: '1', actor: '', performanceStartAt: `${dateOnly(1)} 19:00:00` }])
       setPriceRows([{ id: 1, zone: 'VIP', price: '' }])
     } catch (e) {
       const message = e instanceof PerformanceApiError ? e.message : '공연 등록에 실패했습니다. 백엔드 서버 상태를 확인해 주세요.'
       alert(message)
     } finally {
       setSubmitting(false)
-    }
-  }
-
-  // 실 백엔드(PUT /api/performances/{id})로 먼저 반영하고, 성공하면 로컬 mock db도 같은
-  // 내용으로 갱신해서 화면에 바로 보이게 한다(재조회 없이). 예전엔 이 mock 갱신만 하고
-  // 실 백엔드는 전혀 안 건드려서, 새로고침하면 변경사항이 조용히 사라지는 버그가 있었다.
-  async function handleUpdatePerformance(performance: (typeof performances)[number]) {
-    if (!authUser) {
-      alert('로그인이 필요합니다.')
-      return
-    }
-    const nextTitle = `${performance.title} (수정됨)`
-    const nextDescription = `${performance.description}\n\n[수정됨]`
-    setActionPendingId(performance.id)
-    try {
-      await performanceApi.update(
-        Number(performance.id),
-        {
-          title: nextTitle,
-          description: nextDescription,
-          runtime: performance.runtime,
-          startDate: performance.startDate,
-          endDate: performance.endDate,
-          ticketOpenAt: performance.ticketOpenAt,
-          // performance.hallId는 이제 실 hallId를 그대로 담고 있음(mock 매핑 아님)
-          hallId: Number(performance.hallId),
-        },
-        authUser.userId,
-      )
-      updatePerformance(performance.id, { title: nextTitle, description: nextDescription })
-    } catch (e) {
-      const message = e instanceof PerformanceApiError ? e.message : '공연 수정에 실패했습니다.'
-      alert(message)
-    } finally {
-      setActionPendingId(null)
     }
   }
 
@@ -382,7 +356,7 @@ export default function SellerPage() {
             <div className="grid gap-3 md:grid-cols-2">
               <Input placeholder="공연 제목" value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} />
               <Input placeholder="카테고리" value={form.category} onChange={(e) => setForm({ ...form, category: e.target.value })} />
-              <Input placeholder="러닝타임(분)" type="number" value={form.runtime} onChange={(e) => setForm({ ...form, runtime: e.target.value })} />
+              <Input placeholder="러닝타임(분, 숫자만 입력)" type="number" value={form.runtime} onChange={(e) => setForm({ ...form, runtime: e.target.value })} />
               <Select
                 value={form.venueId != null ? String(form.venueId) : ''}
                 onValueChange={(value) =>
@@ -433,8 +407,8 @@ export default function SellerPage() {
                 <Input
                   id="performance-ticket-open"
                   type="datetime-local"
-                  value={ticketOpenAtToInputValue(form.ticketOpenAt)}
-                  onChange={(e) => setForm({ ...form, ticketOpenAt: inputValueToTicketOpenAt(e.target.value) })}
+                  value={dateTimeToInputValue(form.ticketOpenAt)}
+                  onChange={(e) => setForm({ ...form, ticketOpenAt: inputValueToDateTime(e.target.value) })}
                 />
               </div>
             </div>
@@ -495,9 +469,9 @@ export default function SellerPage() {
                       onChange={(e) => updateSession(index, { actor: e.target.value })}
                     />
                     <Input
-                      placeholder="공연 시작 yyyy-MM-dd HH:mm:ss"
-                      value={session.performanceStartAt}
-                      onChange={(e) => updateSession(index, { performanceStartAt: e.target.value })}
+                      type="datetime-local"
+                      value={dateTimeToInputValue(session.performanceStartAt)}
+                      onChange={(e) => updateSession(index, { performanceStartAt: inputValueToDateTime(e.target.value) })}
                     />
                   </div>
                 </div>
@@ -601,14 +575,6 @@ export default function SellerPage() {
               <div className="mt-4 flex flex-wrap gap-2">
                 <Button asChild size="sm" variant="outline">
                   <Link href={`/performances/${performance.id}`}>상세 보기</Link>
-                </Button>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  disabled={actionPendingId === performance.id}
-                  onClick={() => handleUpdatePerformance(performance)}
-                >
-                  <Pencil className="mr-1 size-3.5" />수정
                 </Button>
                 <Button
                   size="sm"
