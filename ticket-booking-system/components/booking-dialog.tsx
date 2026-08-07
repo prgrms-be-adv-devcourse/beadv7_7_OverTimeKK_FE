@@ -18,7 +18,7 @@ import { RealTossPayment } from '@/components/real-toss-payment'
 import { WaitlistDialog } from '@/components/waitlist-dialog'
 import { useApp } from '@/lib/store'
 import { orderApi, OrderApiError } from '@/lib/order-api'
-import { performanceApi, type RealTicket } from '@/lib/performance-api'
+import { performanceApi, PerformanceApiError, type RealTicket, type TicketHoldResult } from '@/lib/performance-api'
 import { writePendingPaymentLedger } from '@/lib/pending-payment'
 import { canWaitlistZone, formatKRW, formatDay, formatTime } from '@/lib/domain'
 import type { Performance, PerformanceSession, Zone } from '@/lib/types'
@@ -74,6 +74,11 @@ export function BookingDialog({
   const [waitlistPrefillZones, setWaitlistPrefillZones] = useState<Zone[]>([])
   const [pointsInput, setPointsInput] = useState('0')
   const [selectedRealTicket, setSelectedRealTicket] = useState<{ ticketId: number; price: number } | null>(null)
+  // "좌석 선택 완료" 클릭 시 holdTicket() 호출.
+  // (STEP3에서 다시 hold를 걸지 않음) null이면 아직 hold 안 됨.
+  const [heldTicket, setHeldTicket] = useState<TicketHoldResult | null>(null)
+  const [holdingTicket, setHoldingTicket] = useState(false)
+  const [holdError, setHoldError] = useState<string | null>(null)
   const [pendingPayment, setPendingPayment] = useState<{
     paymentId: number
     tossOrderId: string
@@ -119,7 +124,7 @@ export function BookingDialog({
       cancelled = true
     }
   }, [isRealPerformance, activeZone, performance.id, session.sessionNum])
-
+  //다이얼로그가 새로 열릴 때마다 상태를 초기화하는 effect
   useEffect(() => {
     if (open) {
       setStep('select')
@@ -127,6 +132,8 @@ export function BookingDialog({
       setPendingPayment(null)
       setPendingPaymentError(null)
       setSelectedRealTicket(null)
+      setHeldTicket(null)
+      setHoldError(null)
       setWaitlistOpen(false)
       setWaitlistPrefillZones([])
       setPointsInput('0')
@@ -144,6 +151,16 @@ export function BookingDialog({
     // "열릴 때"만 초기화하면 되므로 open만 감시한다.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, initialZone])
+
+  // 다이얼로그가 닫히면(X, 배경 클릭, "이전" 등으로 결제 완료 전에 이탈) hold를 즉시 풀어준다.
+  // 안 풀어줘도 5분 뒤 백엔드 스케줄러가 자동 해제하지만, 그때까지 다른 사람이 이 좌석을
+  // 못 고르게 되는 걸 막기 위해 명시적으로 해제한다. 실패해도(네트워크 등) 조용히 무시 —
+  // 스케줄러가 결국 정리해준다.
+  useEffect(() => {
+    if (open || !heldTicket) return
+    performanceApi.releaseTicket(heldTicket.ticketId, heldTicket.holdKey).catch(() => {})
+    setHeldTicket(null)
+  }, [open, heldTicket])
 
   const seatSelections = useMemo(
     () =>
@@ -253,12 +270,43 @@ export function BookingDialog({
     holdSeat({ performanceId: performance.id, sessionId: session.id, zone, seatId })
   }
 
+  // "좌석 선택 완료" 클릭 시점에 실제로 좌석을 hold한다(STEP1→STEP2 전환). 여기서 받은
+  // holdKey/holdExpiredAt을 STEP3 결제까지 그대로 들고 간다 — STEP3에서 다시 hold하지 않는다.
+  async function handleConfirmSeatSelection() {
+    if (!selectedRealTicket || !authUser) {
+      setStep('price')
+      return
+    }
+    setHoldingTicket(true)
+    setHoldError(null)
+    try {
+      const hold = await performanceApi.holdTicket(selectedRealTicket.ticketId, authUser.userId, 'GENERAL')
+      setHeldTicket(hold)
+      setStep('price')
+    } catch (e) {
+      setHoldError(e instanceof PerformanceApiError ? e.message : '좌석을 점유하지 못했습니다. 다시 시도해 주세요.')
+    } finally {
+      setHoldingTicket(false)
+    }
+  }
+
+  // STEP2 "이전" — 이미 걸어둔 hold를 풀고 좌석 선택 화면으로 되돌아간다.
+  function handleBackToSeatSelection() {
+    if (heldTicket) {
+      performanceApi.releaseTicket(heldTicket.ticketId, heldTicket.holdKey).catch(() => {})
+      setHeldTicket(null)
+    }
+    setStep('select')
+  }
+
   // 실 토스 결제창은 페이지 이탈(리다이렉트)을 동반해서, 결제 승인(confirm)은 여기서 못 하고
   // /payment/success에서 이어받는다. 이 다이얼로그는 'pay' 단계에 들어서면 실 주문(order-service)의
   // createOrder→pay만 미리 해둬서 토스 결제창을 열 orderId/paymentId를 준비하는 역할까지만 한다.
+  // hold는 이미 "좌석 선택 완료"(STEP1→STEP2) 시점에 걸어뒀으므로 여기서 다시 걸지 않고
+  // heldTicket을 그대로 재사용한다.
   useEffect(() => {
     if (step !== 'pay' || pendingPayment) return
-    if (!authUser || !selectedRealTicket) {
+    if (!authUser || !heldTicket) {
       setPendingPaymentError('선택한 좌석 정보를 찾을 수 없습니다. 좌석을 다시 선택해 주세요.')
       return
     }
@@ -271,11 +319,14 @@ export function BookingDialog({
         // 항상 0에 가깝다 — 잘못 넘기면 포인트 사용 자체가 실패로 막힘. 그래서 토스 결제창엔
         // 항상 좌석 정가(gross)를 그대로 청구하고, "포인트 사용" 할인은 지금처럼 mock 장부에만
         // 반영한다(finalAmount는 화면 표시/마이페이지 mock 기록용).
-        // 주문 생성 전에 반드시 hold를 호출해서 서버가 계산한 price/만료시각/holdKey를 받아야 한다
-        // (order-service의 CreateOrderRequest가 이 값들을 요구함 — 클라이언트가 임의로 만들면 안 됨).
-        const hold = await performanceApi.holdTicket(selectedRealTicket.ticketId, authUser.userId, 'GENERAL')
-        const created = await orderApi.createOrder(hold.ticketId, authUser.userId, hold.price, hold.holdExpiredAt, hold.holdKey)
-        const paid = await orderApi.pay(created.orderId, hold.price)
+        const created = await orderApi.createOrder(
+          heldTicket.ticketId,
+          authUser.userId,
+          heldTicket.price,
+          heldTicket.holdExpiredAt,
+          heldTicket.holdKey,
+        )
+        const paid = await orderApi.pay(created.orderId, heldTicket.price)
         if (cancelled) return
 
         // 포인트 잔액을 읽어오는 실 API가 아직 없어서(다음 정리 대상), 마이페이지 포인트 내역은
@@ -293,6 +344,9 @@ export function BookingDialog({
         })
 
         setPendingPayment({ paymentId: paid.paymentId, tossOrderId: paid.orderId, amount: paid.amount })
+        // 결제가 성공하면 티켓 상태가 이미 RESERVED로 넘어가므로, 다이얼로그 닫힐 때
+        // release-on-close effect가 이걸 다시 풀어버리지 않도록 hold 상태를 지운다.
+        setHeldTicket(null)
         releaseSeat()
       } catch (e) {
         if (cancelled) return
@@ -304,7 +358,7 @@ export function BookingDialog({
       cancelled = true
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [step, pendingPayment, authUser, selectedRealTicket])
+  }, [step, pendingPayment, authUser, heldTicket])
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -432,8 +486,14 @@ export function BookingDialog({
               <span className="text-lg font-bold">{formatKRW(total)}</span>
             </div>
 
-            <Button size="lg" className="w-full" disabled={totalCount === 0} onClick={() => setStep('price')}>
-              좌석 선택 완료
+            {holdError && <p className="text-sm text-destructive">{holdError}</p>}
+            <Button
+              size="lg"
+              className="w-full"
+              disabled={totalCount === 0 || holdingTicket}
+              onClick={handleConfirmSeatSelection}
+            >
+              {holdingTicket ? '좌석 점유 중...' : '좌석 선택 완료'}
             </Button>
           </>
         )}
@@ -509,7 +569,7 @@ export function BookingDialog({
             </div>
 
             <div className="flex gap-2">
-              <Button variant="outline" onClick={() => setStep('select')}>
+              <Button variant="outline" onClick={handleBackToSeatSelection}>
                 이전
               </Button>
               <Button className="flex-1" size="lg" onClick={() => setStep('pay')}>

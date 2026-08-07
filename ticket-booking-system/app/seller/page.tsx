@@ -576,7 +576,7 @@ export default function SellerPage() {
                 </div>
               </div>
               <div className="mt-4 flex flex-wrap gap-2">
-                <Button asChild size="sm" variant="outline">
+                <Button  size="sm" variant="outline">
                   <Link href={`/performances/${performance.id}`}>상세 보기</Link>
                 </Button>
                 <Button

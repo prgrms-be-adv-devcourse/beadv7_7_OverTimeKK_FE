@@ -189,8 +189,11 @@ export const performanceApi = {
   },
 
   /**
-   * PUT /api/tickets/status/hold — orderApi.createOrder 직전에 반드시 호출해야 한다.
-   * 결제 단계 진입 시 한 번 호출해서 받은 price/holdExpiredAt/holdKey를 그대로 주문 생성에 넘긴다.
+   * PUT /api/tickets/status/hold — orderApi.createOrder 전에 반드시 한 번 호출해야 한다.
+   * 여기서 받은 price/holdExpiredAt/holdKey를 그대로 주문 생성에 넘긴다.
+   * 좌석을 5분간 hold하므로, 호출 후 사용자가 이탈하면 releaseTicket()으로 명시적으로
+   * 풀어줘야 한다(이후 네트워크 등 추가적인상황으로 오류 발생을 대비해 서버 스케줄러가 자동 해제).
+   * (booking-dialog.tsx는 "좌석 선택 완료" 클릭 시)
    */
   holdTicket(ticketId: number, userId: number, orderType: 'GENERAL' | 'STANDBY' = 'GENERAL'): Promise<TicketHoldResult> {
     return request<TicketHoldResult>('/api/tickets/status/hold', {
@@ -198,6 +201,18 @@ export const performanceApi = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ ticketId, userId, orderType }),
     })
+  },
+
+  /**
+   * PUT /api/tickets/status/release — holdTicket()으로 잡아둔 hold를 결제 전에 취소한다.
+   * holdKey는 holdTicket() 응답에서 받은 값을 그대로 넘겨야 한다(다른 사람의 hold를 못 풀게 하는 검증용).
+   */
+  releaseTicket(ticketId: number, holdKey: string): Promise<void> {
+    return request<null>('/api/tickets/status/release', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ticketId, holdKey }),
+    }).then(() => undefined)
   },
 
   /**
