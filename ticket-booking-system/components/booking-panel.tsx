@@ -12,7 +12,7 @@ import { performanceApi } from '@/lib/performance-api'
 import { useApp } from '@/lib/store'
 import { formatKRW, formatDay, formatTime, parseDateTime, NOW } from '@/lib/domain'
 import { cn } from '@/lib/utils'
-import type { Performance, PerformanceSession, Zone } from '@/lib/types'
+import { ZONES, type Performance, type PerformanceSession, type Zone } from '@/lib/types'
 
 export function BookingPanel({ performance }: { performance: Performance }) {
   const { version, role } = useApp()
@@ -48,30 +48,33 @@ export function BookingPanel({ performance }: { performance: Performance }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedSession?.id, version])
 
-  // real 공연은 잔여석도 mock 재고가 아니라 POST /api/tickets/select/seat로 구역별 실제
-  // AVAILABLE 티켓 수를 세어서 계산한다 — mock 재고는 시드값 고정이라 실제 구매/취소가
-  // 반영되지 않는다. null이면 아직 조회 전(로딩 중)이라는 뜻.
-  const [realRemaining, setRealRemaining] = useState<Record<string, number> | null>(null)
+  // real 공연은 구역 목록·가격·잔여석 전부 정적 extras가 아니라 POST /api/tickets/select/seat
+  // 응답에서만 가져온다 — 백엔드에 "구역 목록 조회" API가 없어서 ZONES(VIP/R/S/A) 전부를
+  // 시도해보고, 응답이 온 구역만 실제로 존재하는 구역으로 취급한다(에러 나는 구역은 그
+  // 공연에 없는 구역으로 보고 목록에서 제외 — "매진"이 아니라 애초에 미판매 구역).
+  // null이면 아직 조회 전(로딩 중)이라는 뜻.
+  const [realZones, setRealZones] = useState<{ zone: Zone; price: number; remaining: number }[] | null>(null)
 
   useEffect(() => {
     if (!isRealPerformance || !selectedSession) {
-      setRealRemaining(null)
+      setRealZones(null)
       return
     }
     let cancelled = false
-    setRealRemaining(null)
+    setRealZones(null)
     Promise.all(
-      prices.map((price) =>
+      ZONES.map((zone) =>
         performanceApi
-          .selectSeatZone(Number(performance.id), selectedSession.sessionNum, price.zone)
-          .then(
-            (result) =>
-              [price.zone, result.sessionZones.filter((t) => t.ticketStatus === 'AVAILABLE').length] as const,
-          )
-          .catch(() => [price.zone, 0] as const),
+          .selectSeatZone(Number(performance.id), selectedSession.sessionNum, zone)
+          .then((result) => ({
+            zone,
+            price: result.price,
+            remaining: result.sessionZones.filter((t) => t.ticketStatus === 'AVAILABLE').length,
+          }))
+          .catch(() => null),
       ),
     ).then((entries) => {
-      if (!cancelled) setRealRemaining(Object.fromEntries(entries))
+      if (!cancelled) setRealZones(entries.filter((e): e is { zone: Zone; price: number; remaining: number } => e !== null))
     })
     return () => {
       cancelled = true
@@ -83,20 +86,21 @@ export function BookingPanel({ performance }: { performance: Performance }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isRealPerformance, selectedSession?.sessionNum, performance.id, version, bookingOpen])
 
-  const realRemainingLoading = isRealPerformance && realRemaining === null
+  const realRemainingLoading = isRealPerformance && realZones === null
 
-  const zoneRows = prices
-    .slice()
-    .sort((a, b) => b.price - a.price)
-    .map((price) => {
-      if (isRealPerformance) {
-        const remaining = realRemaining?.[price.zone] ?? 0
-        return { zone: price.zone as Zone, price: price.price, remaining, total: remaining }
-      }
-      const inv = inventory.find((i) => i.zone === price.zone)
-      const remaining = inv ? inv.total - inv.sold : 0
-      return { zone: price.zone as Zone, price: price.price, remaining, total: inv?.total ?? 0 }
-    })
+  const zoneRows = isRealPerformance
+    ? (realZones ?? [])
+        .slice()
+        .sort((a, b) => b.price - a.price)
+        .map((z) => ({ zone: z.zone, price: z.price, remaining: z.remaining, total: z.remaining }))
+    : prices
+        .slice()
+        .sort((a, b) => b.price - a.price)
+        .map((price) => {
+          const inv = inventory.find((i) => i.zone === price.zone)
+          const remaining = inv ? inv.total - inv.sold : 0
+          return { zone: price.zone as Zone, price: price.price, remaining, total: inv?.total ?? 0 }
+        })
 
   const allSoldOut = !realRemainingLoading && zoneRows.length > 0 && zoneRows.every((z) => z.remaining <= 0)
 

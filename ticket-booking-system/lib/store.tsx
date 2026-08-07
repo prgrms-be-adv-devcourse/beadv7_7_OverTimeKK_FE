@@ -80,11 +80,15 @@ export function AppProvider({ children }: { children: ReactNode }) {
     let cancelled = false
     async function loadRealPerformances() {
       try {
-        const realPerformances = await performanceApi.list()
+        const [realPerformances, postUrls] = await Promise.all([
+          performanceApi.list(),
+          performanceApi.listAllPostUrls().catch(() => new Map<number, string>()),
+        ])
         const items = await Promise.all(
           realPerformances.map(async (real) => ({
             real,
             sessions: await performanceApi.sessions(real.performanceId).catch(() => []),
+            postUrl: postUrls.get(real.performanceId) ?? '',
           })),
         )
         if (cancelled) return

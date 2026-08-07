@@ -10,8 +10,11 @@
  * ticketId를 그대로 사용한다.
  *
  * GET /api/performances 는 과거 hall/venue 조인 버그(VEN404_002, 2026-07-26 기준)가
- * 있었으나 이후 해결 확인됨(2026-07-28). 다만 이 클라이언트는 여전히 hallId만 필요한
- * /api/performances/detail 계열을 쓴다(요청 필드가 더 적어서 그대로 유지).
+ * 있었으나 이후 해결 확인됨(2026-07-28). 공연 등록/좌석 조회에 필요한 원본 정보(hallId,
+ * description, runtime, ticketOpenAt)는 여전히 /api/performances/detail 계열을 쓰지만,
+ * 이 목록형 페이지네이션 엔드포인트(?page=N, 1-base)는 detail에는 없는 조립된 포스터
+ * URL(postUrl, presigned GET, 2026-08-07 기준 30분 TTL)을 내려주므로 포스터 표시 전용으로
+ * 함께 쓴다(2026-08-07 확인 — hallId 대신 hallName만 내려오고 description 등은 없음).
  */
 
 export const BASE_URL = process.env.NEXT_PUBLIC_PERFORMANCE_API_BASE_URL ?? 'http://localhost:8083'
@@ -31,6 +34,16 @@ export interface RealPerformance {
   endDate: string
   ticketOpenAt: string
   hallId: number
+}
+
+/** GET /api/performances?page={page} 항목 — 목록/포스터 표시 전용의 가벼운 DTO */
+export interface RealPerformanceSummary {
+  performanceId: number
+  title: string
+  startDate: string
+  endDate: string
+  hallName: string
+  postUrl: string
 }
 
 export interface RealSession {
@@ -109,6 +122,30 @@ export const performanceApi = {
   /** GET /api/performance/{id}/session */
   sessions(performanceId: number): Promise<RealSession[]> {
     return request<RealSession[]>(`/api/performance/${performanceId}/session`)
+  },
+
+  /** GET /api/performances?page={page} — 페이지네이션 목록 (1-base, postUrl 포함) */
+  listPage(page: number): Promise<RealPerformanceSummary[]> {
+    return request<RealPerformanceSummary[]>(`/api/performances?page=${page}`)
+  },
+
+  /**
+   * listPage를 끝까지 순회해 performanceId → postUrl 맵을 만든다.
+   * 개별 페이지 실패/끝(빈 배열, 404)은 조용히 멈추고 그때까지 모은 것만 반환한다.
+   */
+  async listAllPostUrls(): Promise<Map<number, string>> {
+    const map = new Map<number, string>()
+    for (let page = 1; page <= 50; page += 1) {
+      let items: RealPerformanceSummary[]
+      try {
+        items = await performanceApi.listPage(page)
+      } catch {
+        break
+      }
+      if (items.length === 0) break
+      for (const item of items) map.set(item.performanceId, item.postUrl)
+    }
+    return map
   },
 
   /** POST /api/tickets/select/seat — 회차+구역의 좌석(티켓) 목록 + 구역 가격. 좌석 클릭 → 실제 ticketId 매핑에 사용 */

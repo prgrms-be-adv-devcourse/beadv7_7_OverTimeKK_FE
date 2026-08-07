@@ -151,11 +151,11 @@ export default function MyPage() {
       </section>
 
       <div className="flex justify-center gap-2">
-        <Button asChild variant="outline">
-          <Link href="/waitlist">내 대기 신청 보기</Link>
+        <Button render={<Link href="/waitlist" />} variant="outline">
+          내 대기 신청 보기
         </Button>
-        <Button asChild variant="outline">
-          <Link href="/">공연 둘러보기</Link>
+        <Button render={<Link href="/" />} variant="outline">
+          공연 둘러보기
         </Button>
       </div>
 

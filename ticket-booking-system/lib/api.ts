@@ -106,11 +106,13 @@ export const api = {
 
   /**
    * performance-service에서 실제로 받아온 공연+회차를 mock db에 병합한다.
-   * 좌석 등급/가격/잔여석/포스터/카테고리는 lib/performance-extras.ts의 정적 데이터로 채운다
-   * (백엔드에 조회 API가 없음). 이미 반영된 performanceId는 건너뛴다(중복 호출 안전).
+   * 좌석 등급/가격/잔여석/카테고리는 lib/performance-extras.ts의 정적 데이터로 채운다
+   * (백엔드에 조회 API가 없음). 포스터 URL은 GET /api/performances?page=N (postUrl,
+   * performanceApi.listAllPostUrls)에서 따로 조회해 넘겨받는다 — detail 엔드포인트엔 없음.
+   * 이미 반영된 performanceId는 건너뛴다(중복 호출 안전).
    */
-  importRealPerformances(items: { real: RealPerformance; sessions: RealSession[] }[]): void {
-    for (const { real, sessions } of items) {
+  importRealPerformances(items: { real: RealPerformance; sessions: RealSession[]; postUrl?: string }[]): void {
+    for (const { real, sessions, postUrl } of items) {
       const id = String(real.performanceId)
       if (db.performances.some((p) => p.id === id)) continue
 
@@ -127,7 +129,7 @@ export const api = {
         endDate: real.endDate,
         ticketOpenAt: real.ticketOpenAt,
         hallId: extras.hallId,
-        posterUrl: extras.posterUrl,
+        posterUrl: postUrl ?? '',
         category: extras.category,
         status: 'ON_SALE',
       })

@@ -131,8 +131,8 @@ export default function SellerMyPage() {
       </section>
 
       <div className="text-center">
-        <Button asChild variant="outline">
-          <Link href="/">공연 둘러보기</Link>
+        <Button render={<Link href="/" />} variant="outline">
+          공연 둘러보기
         </Button>
       </div>
     </div>

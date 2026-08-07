@@ -107,7 +107,7 @@ export default function SellerPage() {
         throw new Error('S3 업로드에 실패했습니다.')
       }
 
-      setForm((prev) => ({ ...prev, posterUrl: imagesApi.toDisplayUrl(objectKey) }))
+      setForm((prev) => ({ ...prev, posterUrl: objectKey }))
     } catch (error) {
       setPosterUploadError(error instanceof Error ? error.message : '이미지 업로드에 실패했습니다.')
     } finally {
@@ -167,13 +167,15 @@ export default function SellerPage() {
       const created = [...list].reverse().find((p) => p.title === form.title)
       if (created) {
         const realSessions = await performanceApi.sessions(created.performanceId).catch(() => [])
+        const postUrls = await performanceApi.listAllPostUrls().catch(() => new Map<number, string>())
         registerPerformanceExtras(form.title, {
-          posterUrl: form.posterUrl,
           category: form.category,
           hallId: hallOption.localHallId,
           zonePrices: Object.fromEntries(prices.map((p) => [p.zone, p.price])),
         })
-        api.importRealPerformances([{ real: created, sessions: realSessions }])
+        api.importRealPerformances([
+          { real: created, sessions: realSessions, postUrl: postUrls.get(created.performanceId) ?? '' },
+        ])
         refresh()
       }
 
@@ -264,7 +266,7 @@ export default function SellerPage() {
               {form.posterUrl ? (
                 <div className="rounded-lg border border-border p-3">
                   <p className="mb-2 text-sm font-medium">업로드된 포스터</p>
-                  <img src={form.posterUrl} alt="공연 포스터 미리보기" className="h-40 w-full rounded-md object-cover" />
+                  <img src={imagesApi.toDisplayUrl(form.posterUrl)} alt="공연 포스터 미리보기" className="h-40 w-full rounded-md object-cover" />
                 </div>
               ) : (
                 <p className="text-sm text-muted-foreground">이미지를 업로드하면 포스터가 표시됩니다.</p>
@@ -414,8 +416,8 @@ export default function SellerPage() {
                 </div>
               </div>
               <div className="mt-4 flex flex-wrap gap-2">
-                <Button asChild size="sm" variant="outline">
-                  <Link href={`/performances/${performance.id}`}>상세 보기</Link>
+                <Button render={<Link href={`/performances/${performance.id}`} />} size="sm" variant="outline">
+                  상세 보기
                 </Button>
                 <Button size="sm" variant="outline" onClick={() => {
                   updatePerformance(performance.id, {
