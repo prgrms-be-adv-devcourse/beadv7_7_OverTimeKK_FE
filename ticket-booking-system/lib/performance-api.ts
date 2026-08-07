@@ -50,6 +50,18 @@ export interface RealTicketZone {
   sessionZones: RealTicket[]
 }
 
+/**
+ * PUT /api/tickets/status/hold 응답 — 이 호출이 실제로 좌석을 5분간 hold한다(TimeLimits.orderHoldTicket5Min).
+ * holdExpiredAt/holdKey는 서버가 생성한 값 그대로 order-api.ts의 createOrder에 넘겨야 한다
+ * (order-service의 CreateOrderRequest가 이 세 값을 그대로 검증에 사용 — 클라이언트가 임의로 만들면 안 됨).
+ */
+export interface TicketHoldResult {
+  ticketId: number
+  price: number
+  holdExpiredAt: string
+  holdKey: string
+}
+
 interface ApiResponse<T> {
   success: boolean
   data: T | null
@@ -124,6 +136,18 @@ export const performanceApi = {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ performanceId, sessionNum, zone }),
+    })
+  },
+
+  /**
+   * PUT /api/tickets/status/hold — orderApi.createOrder 직전에 반드시 호출해야 한다.
+   * 결제 단계 진입 시 한 번 호출해서 받은 price/holdExpiredAt/holdKey를 그대로 주문 생성에 넘긴다.
+   */
+  holdTicket(ticketId: number, userId: number, orderType: 'GENERAL' | 'STANDBY' = 'GENERAL'): Promise<TicketHoldResult> {
+    return request<TicketHoldResult>('/api/tickets/status/hold', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ticketId, userId, orderType }),
     })
   },
 

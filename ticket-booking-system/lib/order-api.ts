@@ -21,9 +21,6 @@
 
 const BASE_URL = process.env.NEXT_PUBLIC_ORDER_API_BASE_URL ?? 'http://localhost:8082'
 
-/** POST /api/order의 orderType — 일반 예매 흐름에서는 항상 GENERAL, 대기열 매칭 구매는 STANDBY */
-export type OrderType = 'GENERAL' | 'STANDBY'
-
 interface ApiResponse<T> {
   success: boolean
   data: T | null
@@ -92,11 +89,16 @@ export const orderApi = {
     return request<OrderHistoryItem[]>(`/api/order?userId=${userId}`)
   },
 
-  /** POST /api/order — ticketId는 performanceApi.tickets()로 조회한 실제 좌석의 ticketId */
-  createOrder(ticketId: number, userId: number, orderType: OrderType = 'GENERAL'): Promise<CreateOrderResult> {
+  /**
+   * POST /api/order — ticketId는 performanceApi.tickets()로 조회한 실제 좌석의 ticketId.
+   * price/expiredAt/holdKey는 반드시 이 호출 직전에 performanceApi.holdTicket()이 돌려준 값을
+   * 그대로 넘겨야 한다(서버가 계산한 hold 정보 없이는 CreateOrderRequest 검증에 실패한다 — 클라이언트가
+   * 만료시각을 임의로 조작하지 못하게 하려는 설계).
+   */
+  createOrder(ticketId: number, userId: number, price: number, expiredAt: string, holdKey: string): Promise<CreateOrderResult> {
     return request<CreateOrderResult>('/api/order', {
       method: 'POST',
-      body: JSON.stringify({ userId, ticketId, orderType }),
+      body: JSON.stringify({ userId, ticketId, price, expiredAt, holdKey }),
     })
   },
 

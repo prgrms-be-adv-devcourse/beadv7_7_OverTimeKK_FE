@@ -12,10 +12,34 @@ import { venueApi, type VenueSummary, type HallSummary, type HallDirectoryEntry 
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
+import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { PerformanceStatusBadge } from '@/components/status-badges'
 import { LoginRequired } from '@/components/login-required'
 import type { Zone } from '@/lib/types'
+
+/** 백엔드가 기대하는 'yyyy-MM-dd HH:mm:ss' 형식의 현재 시각 — 티켓 오픈일 기본값(등록 즉시 예매 테스트 가능하도록) */
+function defaultTicketOpenAt(): string {
+  const now = new Date()
+  const yyyy = now.getFullYear()
+  const mm = String(now.getMonth() + 1).padStart(2, '0')
+  const dd = String(now.getDate()).padStart(2, '0')
+  const hh = String(now.getHours()).padStart(2, '0')
+  const min = String(now.getMinutes()).padStart(2, '0')
+  return `${yyyy}-${mm}-${dd} ${hh}:${min}:00`
+}
+
+/** 'yyyy-MM-dd HH:mm:ss' → <input type="datetime-local">이 요구하는 'yyyy-MM-ddTHH:mm' */
+function ticketOpenAtToInputValue(value: string): string {
+  const [datePart, timePart = '00:00:00'] = value.split(' ')
+  return `${datePart}T${timePart.slice(0, 5)}`
+}
+
+/** <input type="datetime-local"> 값('yyyy-MM-ddTHH:mm') → 백엔드가 기대하는 'yyyy-MM-dd HH:mm:ss' */
+function inputValueToTicketOpenAt(value: string): string {
+  const [datePart, timePart = '00:00'] = value.split('T')
+  return `${datePart} ${timePart}:00`
+}
 
 export default function SellerPage() {
   const {
@@ -74,11 +98,11 @@ export default function SellerPage() {
     runtime: '120',
     startDate: '2026-08-01',
     endDate: '2026-08-02',
-    ticketOpenAt: '2026-07-21 12:00:00',
+    ticketOpenAt: defaultTicketOpenAt(),
     venueId: null,
     hallId: null,
     posterUrl: '',
-    category: '콘서트',
+    category: '',
   })
 
   // venue 선택이 바뀌면 그 venue의 hall 목록을 새로 불러오고, 이전에 고른 hall 선택은 초기화한다.
@@ -250,11 +274,11 @@ export default function SellerPage() {
         runtime: '120',
         startDate: '2026-08-01',
         endDate: '2026-08-02',
-        ticketOpenAt: '2026-07-21 12:00:00',
+        ticketOpenAt: defaultTicketOpenAt(),
         venueId: null,
         hallId: null,
         posterUrl: '',
-        category: '콘서트',
+        category: '',
       })
       setSessions([{ sessionNum: '1', actor: '', performanceStartAt: '2026-08-01 19:00:00' }])
       setPriceRows([{ id: 1, zone: 'VIP', price: '' }])
@@ -391,9 +415,28 @@ export default function SellerPage() {
                   ))}
                 </SelectContent>
               </Select>
-              <Input type="date" value={form.startDate} onChange={(e) => setForm({ ...form, startDate: e.target.value })} />
-              <Input type="date" value={form.endDate} onChange={(e) => setForm({ ...form, endDate: e.target.value })} />
-              <Input placeholder="티켓 오픈 yyyy-MM-dd HH:mm:ss" value={form.ticketOpenAt} onChange={(e) => setForm({ ...form, ticketOpenAt: e.target.value })} />
+              <div className="md:col-span-2 space-y-1.5">
+                <p className="text-sm text-muted-foreground">공연이 진행되는 시작일과 종료일을 선택하세요 (모든 회차는 이 기간 안에 있어야 합니다)</p>
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-1">
+                    <Label htmlFor="performance-start-date">시작일</Label>
+                    <Input id="performance-start-date" type="date" value={form.startDate} onChange={(e) => setForm({ ...form, startDate: e.target.value })} />
+                  </div>
+                  <div className="space-y-1">
+                    <Label htmlFor="performance-end-date">종료일</Label>
+                    <Input id="performance-end-date" type="date" value={form.endDate} onChange={(e) => setForm({ ...form, endDate: e.target.value })} />
+                  </div>
+                </div>
+              </div>
+              <div className="space-y-1">
+                <Label htmlFor="performance-ticket-open">티켓 오픈 일시</Label>
+                <Input
+                  id="performance-ticket-open"
+                  type="datetime-local"
+                  value={ticketOpenAtToInputValue(form.ticketOpenAt)}
+                  onChange={(e) => setForm({ ...form, ticketOpenAt: inputValueToTicketOpenAt(e.target.value) })}
+                />
+              </div>
             </div>
             <div className="md:col-span-2 space-y-2">
               <div className="flex flex-wrap items-center gap-2">

@@ -141,8 +141,11 @@ export function WaitlistPaymentDialog({
     setPendingPaymentError(null)
     ;(async () => {
       try {
-        const created = await orderApi.createOrder(ticketId, authUser.userId, 'STANDBY')
-        const paid = await orderApi.pay(created.orderId, price)
+        // 주문 생성 전에 반드시 hold를 호출해서 서버가 계산한 price/만료시각/holdKey를 받아야 한다
+        // (order-service의 CreateOrderRequest가 이 값들을 요구함 — booking-dialog와 동일한 이유).
+        const hold = await performanceApi.holdTicket(ticketId, authUser.userId, 'STANDBY')
+        const created = await orderApi.createOrder(hold.ticketId, authUser.userId, hold.price, hold.holdExpiredAt, hold.holdKey)
+        const paid = await orderApi.pay(created.orderId, hold.price)
         if (cancelled) return
 
         writePendingPaymentLedger(paid.paymentId, {

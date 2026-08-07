@@ -267,8 +267,11 @@ export function BookingDialog({
         // 항상 0에 가깝다 — 잘못 넘기면 포인트 사용 자체가 실패로 막힘. 그래서 토스 결제창엔
         // 항상 좌석 정가(gross)를 그대로 청구하고, "포인트 사용" 할인은 지금처럼 mock 장부에만
         // 반영한다(finalAmount는 화면 표시/마이페이지 mock 기록용).
-        const created = await orderApi.createOrder(selectedRealTicket.ticketId, authUser.userId)
-        const paid = await orderApi.pay(created.orderId, selectedRealTicket.price)
+        // 주문 생성 전에 반드시 hold를 호출해서 서버가 계산한 price/만료시각/holdKey를 받아야 한다
+        // (order-service의 CreateOrderRequest가 이 값들을 요구함 — 클라이언트가 임의로 만들면 안 됨).
+        const hold = await performanceApi.holdTicket(selectedRealTicket.ticketId, authUser.userId, 'GENERAL')
+        const created = await orderApi.createOrder(hold.ticketId, authUser.userId, hold.price, hold.holdExpiredAt, hold.holdKey)
+        const paid = await orderApi.pay(created.orderId, hold.price)
         if (cancelled) return
 
         // 포인트 잔액을 읽어오는 실 API가 아직 없어서(다음 정리 대상), 마이페이지 포인트 내역은

@@ -1,7 +1,7 @@
 import type { Performance, Zone } from './types'
 
-/** 서비스 기준 "현재 시각". 데모 일관성을 위해 고정합니다. (실서비스에서는 new Date()) */
-export const NOW = new Date('2026-07-21T13:00:00')
+/** 서비스 기준 "현재 시각". */
+export const NOW = new Date()
 
 export function now(): Date {
   return new Date()
