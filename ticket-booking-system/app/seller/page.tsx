@@ -100,6 +100,7 @@ export default function SellerPage() {
     venueId: number | null
     hallId: number | null
     posterUrl: string
+    posterObjectKey: string
     category: string
   }>({
     title: '',
@@ -111,6 +112,7 @@ export default function SellerPage() {
     venueId: null,
     hallId: null,
     posterUrl: '',
+    posterObjectKey: '',
     category: '',
   })
 
@@ -199,7 +201,7 @@ export default function SellerPage() {
         throw new Error('S3 업로드에 실패했습니다.')
       }
 
-      setForm((prev) => ({ ...prev, posterUrl: imagesApi.toDisplayUrl(objectKey) }))
+      setForm((prev) => ({ ...prev, posterUrl: imagesApi.toDisplayUrl(objectKey), posterObjectKey: objectKey }))
     } catch (error) {
       setPosterUploadError(error instanceof Error ? error.message : '이미지 업로드에 실패했습니다.')
     } finally {
@@ -251,7 +253,7 @@ export default function SellerPage() {
           endDate: form.endDate,
           ticketOpenAt: form.ticketOpenAt,
           hallId: form.hallId,
-          postUrl: form.posterUrl,
+          postUrl: form.posterObjectKey,
           sessions: sessions.map((session) => ({
             sessionNum: Number(session.sessionNum) || 1,
             actor: session.actor,
@@ -287,6 +289,7 @@ export default function SellerPage() {
         venueId: null,
         hallId: null,
         posterUrl: '',
+        posterObjectKey: '',
         category: '',
       })
       setSessions([{ sessionNum: '1', actor: '', performanceStartAt: `${dateOnly(1)} 19:00:00` }])

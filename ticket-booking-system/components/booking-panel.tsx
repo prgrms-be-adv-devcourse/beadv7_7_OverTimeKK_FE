@@ -31,11 +31,17 @@ export function BookingPanel({ performance }: { performance: Performance }) {
   )
 
   const [selectedSessionId, setSelectedSessionId] = useState(sessions[0]?.id ?? '')
+  const [selectedZone, setSelectedZone] = useState<Zone | null>(null)
   const [bookingOpen, setBookingOpen] = useState(false)
   const [waitlistOpen, setWaitlistOpen] = useState(false)
 
   const selectedSession =
     sessions.find((s) => s.id === selectedSessionId) ?? sessions[0]
+
+  // 회차를 바꾸면 이전 회차에서 고른 구역 선택은 무효화한다.
+  useEffect(() => {
+    setSelectedZone(null)
+  }, [selectedSessionId])
 
   const inventory = useMemo(() => {
     if (!selectedSession) return []
@@ -103,6 +109,37 @@ export function BookingPanel({ performance }: { performance: Performance }) {
         })
 
   const allSoldOut = !realRemainingLoading && zoneRows.length > 0 && zoneRows.every((z) => z.remaining <= 0)
+
+  // real 공연은 구역(좌석 등급)을 고르는 시점에 POST /api/tickets/select/seat를 호출해
+  // 그 회차·구역에 실제 발행된 좌석을 확인한다 — 잔여석/가격은 이미 sessionSeats(집계 API)로
+  // 표시되어 있지만, 예매 다이얼로그로 넘어가기 전에 선택한 구역이 실제로 예매 가능한지
+  // 미리 검증하는 역할을 한다.
+  const [zoneSelectionLoading, setZoneSelectionLoading] = useState(false)
+  const [zoneSelectionError, setZoneSelectionError] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (!isRealPerformance || !selectedSession || !selectedZone) {
+      setZoneSelectionError(null)
+      return
+    }
+    let cancelled = false
+    setZoneSelectionLoading(true)
+    setZoneSelectionError(null)
+    performanceApi
+      .selectSeatZone(Number(performance.id), selectedSession.sessionNum, selectedZone)
+      .catch((e) => {
+        if (!cancelled) {
+          console.warn('구역별 좌석 조회 실패:', e)
+          setZoneSelectionError('선택한 구역의 좌석 정보를 불러오지 못했습니다. 다시 선택해 주세요.')
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setZoneSelectionLoading(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [isRealPerformance, selectedSession, selectedZone, performance.id])
 
   if (cancelled) {
     return (
@@ -173,35 +210,46 @@ export function BookingPanel({ performance }: { performance: Performance }) {
 
       {/* 좌석 구역/가격 */}
       <div>
-        <p className="mb-2 text-sm font-semibold">좌석 등급 · 잔여석</p>
+        <p className="mb-2 text-sm font-semibold">좌석 등급 선택 · 잔여석</p>
         <div className="space-y-1.5">
-          {zoneRows.map((z) => (
-            <div
-              key={z.zone}
-              className="flex items-center justify-between rounded-lg bg-secondary/60 px-3 py-2"
-            >
-              <div className="flex items-center gap-2">
-                <ZoneBadge zone={z.zone} />
-                <span className="text-sm font-medium">{formatKRW(z.price)}</span>
-              </div>
-              <span
+          {zoneRows.map((z) => {
+            const active = selectedZone === z.zone
+            return (
+              <button
+                key={z.zone}
+                type="button"
+                onClick={() => setSelectedZone(z.zone)}
                 className={cn(
-                  'flex items-center gap-1 text-xs font-medium',
-                  realRemainingLoading
-                    ? 'text-muted-foreground'
-                    : z.remaining <= 0
-                      ? 'text-destructive'
-                      : z.remaining <= 5
-                        ? 'text-warning'
-                        : 'text-muted-foreground',
+                  'flex w-full items-center justify-between rounded-lg border px-3 py-2 text-left transition-colors',
+                  active
+                    ? 'border-primary bg-primary/5'
+                    : 'border-transparent bg-secondary/60 hover:border-primary/40',
                 )}
               >
-                <Users className="size-3.5" />
-                {realRemainingLoading ? '잔여석 확인 중...' : z.remaining <= 0 ? '매진' : `잔여 ${z.remaining}석`}
-              </span>
-            </div>
-          ))}
+                <div className="flex items-center gap-2">
+                  <ZoneBadge zone={z.zone} />
+                  <span className="text-sm font-medium">{formatKRW(z.price)}</span>
+                </div>
+                <span
+                  className={cn(
+                    'flex items-center gap-1 text-xs font-medium',
+                    realRemainingLoading
+                      ? 'text-muted-foreground'
+                      : z.remaining <= 0
+                        ? 'text-destructive'
+                        : z.remaining <= 5
+                          ? 'text-warning'
+                          : 'text-muted-foreground',
+                  )}
+                >
+                  <Users className="size-3.5" />
+                  {realRemainingLoading ? '잔여석 확인 중...' : z.remaining <= 0 ? '매진' : `잔여 ${z.remaining}석`}
+                </span>
+              </button>
+            )
+          })}
         </div>
+        {zoneSelectionError && <p className="mt-2 text-xs text-destructive">{zoneSelectionError}</p>}
       </div>
 
       {/* 액션 */}
@@ -237,9 +285,9 @@ export function BookingPanel({ performance }: { performance: Performance }) {
               className="w-full"
               size="lg"
               onClick={() => setBookingOpen(true)}
-              disabled={!authUser || role !== 'BUYER'}
+              disabled={!authUser || role !== 'BUYER' || !selectedZone || zoneSelectionLoading}
             >
-              예매하기
+              {zoneSelectionLoading ? '좌석 확인 중...' : '예매하기'}
             </Button>
             {!authUser ? (
               <p className="text-center text-xs text-muted-foreground">로그인 후 예매할 수 있습니다</p>
@@ -247,6 +295,8 @@ export function BookingPanel({ performance }: { performance: Performance }) {
               <p className="text-center text-xs text-muted-foreground">
                 구매자로 전환하면 예매할 수 있습니다
               </p>
+            ) : !selectedZone ? (
+              <p className="text-center text-xs text-muted-foreground">좌석 등급을 먼저 선택해 주세요</p>
             ) : null}
           </>
         )}
@@ -260,6 +310,7 @@ export function BookingPanel({ performance }: { performance: Performance }) {
             performance={performance}
             session={selectedSession}
             zoneRows={zoneRows}
+            initialZone={selectedZone}
           />
           <WaitlistDialog
             open={waitlistOpen}

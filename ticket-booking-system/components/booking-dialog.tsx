@@ -44,12 +44,14 @@ export function BookingDialog({
   performance,
   session,
   zoneRows,
+  initialZone,
 }: {
   open: boolean
   onOpenChange: (v: boolean) => void
   performance: Performance
   session: PerformanceSession
   zoneRows: ZoneRow[]
+  initialZone?: Zone | null
 }) {
   const { points, heldSeat, holdSeat, releaseSeat, authUser } = useApp()
 
@@ -131,7 +133,9 @@ export function BookingDialog({
       const preselectedZone = (Object.entries(heldSeatsForThisSession) as [Zone, string[]][]).find(
         ([, labels]) => labels.length > 0,
       )?.[0]
-      const firstAvailable = preselectedZone ?? zoneRows.find((z) => z.remaining > 0)?.zone ?? null
+      const initialZoneAvailable = initialZone && zoneRows.find((z) => z.zone === initialZone && z.remaining > 0)?.zone
+      const firstAvailable =
+        preselectedZone ?? initialZoneAvailable ?? zoneRows.find((z) => z.remaining > 0)?.zone ?? null
       setActiveZone(firstAvailable)
     }
     // zoneRows는 의도적으로 deps에서 뺐다: 결제 성공 시 잔여석이 줄면서 zoneRows 참조가
@@ -139,7 +143,7 @@ export function BookingDialog({
     // 다시 실행돼서 결제 진행 화면이 곧바로 좌석 선택 화면으로 리셋돼버린다. 다이얼로그가
     // "열릴 때"만 초기화하면 되므로 open만 감시한다.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open])
+  }, [open, initialZone])
 
   const seatSelections = useMemo(
     () =>
