@@ -133,10 +133,31 @@ export interface UpdatePerformanceInput {
   hallId: number
 }
 
+/** GET /api/performances?page= 목록 한 줄 — 상세 화면과 달리 요약 필드(hallName 포함, hallId 없음)만 내려온다 */
+export interface RealPerformanceListItem {
+  performanceId: number
+  title: string
+  startDate: string
+  endDate: string
+  hallName: string
+  /** 포스터 이미지 presigned GET URL. 발급 후 1800초(30분)면 만료되므로 캐시하지 말 것 */
+  postUrl: string
+}
+
+export interface RealPerformanceListPage {
+  pageCount: number
+  performances: RealPerformanceListItem[]
+}
+
 export const performanceApi = {
   /** GET /api/performances/detail — 전체 공연 목록 (원본 정보만) */
   list(): Promise<RealPerformance[]> {
     return request<RealPerformance[]>('/api/performances/detail')
+  },
+
+  /** GET /api/performances?page={page} — 홈 화면 공연 목록(서버 페이지네이션) */
+  listPaged(page: number): Promise<RealPerformanceListPage> {
+    return request<RealPerformanceListPage>(`/api/performances?page=${page}`)
   },
 
   /** GET /api/performances/detail/{id} */

@@ -1,50 +1,41 @@
 'use client'
 
-import { useMemo, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Bell } from 'lucide-react'
 import { PerformanceCard } from '@/components/performance-card'
 import { Button } from '@/components/ui/button'
-import { useApp } from '@/lib/store'
-import { api } from '@/lib/api'
-
-type Filter = 'ALL' | 'ON_SALE' | 'UPCOMING'
-
-const FILTERS: { key: Filter; label: string }[] = [
-  { key: 'ALL', label: '전체' },
-  { key: 'ON_SALE', label: '예매중' },
-  { key: 'UPCOMING', label: '오픈예정' },
-]
-
-const PAGE_SIZE = 3
+import { performanceApi } from '@/lib/performance-api'
+import type { RealPerformanceListItem } from '@/lib/performance-api'
 
 export default function HomePage() {
-  const { version } = useApp()
-  const [filter, setFilter] = useState<Filter>('ALL')
   const [page, setPage] = useState(1)
+  const [pageCount, setPageCount] = useState(1)
+  const [performances, setPerformances] = useState<RealPerformanceListItem[]>([])
+  const [loading, setLoading] = useState(true)
 
-  const performances = useMemo(() => {
-    // version 을 참조해 데이터 변경 시 재계산
-    void version
-    return api.listPerformances().filter((p) => p.status !== 'DRAFT')
-  }, [version])
-
-  const filtered = useMemo(() => {
-    return performances.filter((p) => {
-      if (filter === 'ALL') return true
-      if (filter === 'UPCOMING') return !api.ticketOpened(p)
-      if (filter === 'ON_SALE') return p.status === 'ON_SALE'
-      return true
-    })
-  }, [performances, filter])
-
-  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE))
-  const currentPage = Math.min(page, totalPages)
-  const paged = filtered.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE)
-
-  const handleFilterChange = (f: Filter) => {
-    setFilter(f)
-    setPage(1)
-  }
+  useEffect(() => {
+    let cancelled = false
+    setLoading(true)
+    performanceApi
+      .listPaged(page)
+      .then((result) => {
+        if (cancelled) return
+        setPerformances(result.performances)
+        setPageCount(Math.max(1, result.pageCount))
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setPerformances([])
+          setPageCount(1)
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [page])
 
   return (
     <div>
@@ -71,45 +62,30 @@ export default function HomePage() {
       <section className="mx-auto max-w-6xl px-4 py-10">
         <div className="mb-6 flex flex-wrap items-center justify-between gap-4">
           <h2 className="text-xl font-bold">공연 조회</h2>
-          <div className="flex flex-wrap gap-2">
-            {FILTERS.map((f) => (
-              <Button
-                key={f.key}
-                size="sm"
-                variant={filter === f.key ? 'default' : 'outline'}
-                onClick={() => handleFilterChange(f.key)}
-              >
-                {f.label}
-              </Button>
-            ))}
-          </div>
         </div>
 
-        {filtered.length === 0 ? (
+        {loading ? (
+          <p className="py-20 text-center text-muted-foreground">불러오는 중...</p>
+        ) : performances.length === 0 ? (
           <p className="py-20 text-center text-muted-foreground">해당 조건의 공연이 없습니다.</p>
         ) : (
           <>
             <div className="grid grid-cols-2 gap-4 md:grid-cols-3 lg:grid-cols-4">
-              {paged.map((p) => (
-                <PerformanceCard key={p.id} performance={p} />
+              {performances.map((p) => (
+                <PerformanceCard key={p.performanceId} performance={p} />
               ))}
             </div>
 
-            {totalPages > 1 && (
+            {pageCount > 1 && (
               <div className="mt-8 flex items-center justify-center gap-1.5">
-                <Button
-                  size="sm"
-                  variant="outline"
-                  disabled={currentPage === 1}
-                  onClick={() => setPage(currentPage - 1)}
-                >
+                <Button size="sm" variant="outline" disabled={page === 1} onClick={() => setPage(page - 1)}>
                   이전
                 </Button>
-                {Array.from({ length: totalPages }, (_, i) => i + 1).map((n) => (
+                {Array.from({ length: pageCount }, (_, i) => i + 1).map((n) => (
                   <Button
                     key={n}
                     size="sm"
-                    variant={n === currentPage ? 'default' : 'outline'}
+                    variant={n === page ? 'default' : 'outline'}
                     onClick={() => setPage(n)}
                   >
                     {n}
@@ -118,8 +94,8 @@ export default function HomePage() {
                 <Button
                   size="sm"
                   variant="outline"
-                  disabled={currentPage === totalPages}
-                  onClick={() => setPage(currentPage + 1)}
+                  disabled={page === pageCount}
+                  onClick={() => setPage(page + 1)}
                 >
                   다음
                 </Button>
