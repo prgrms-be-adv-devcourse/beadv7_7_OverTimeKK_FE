@@ -176,7 +176,9 @@ export function BookingDialog({
     return sum + (row?.price ?? 0) * item.labels.length
   }, 0)
 
-  const maxUsablePoints = Math.max(0, Math.min(points, total))
+  // total - 1로 캡: 백엔드가 포인트 전액 결제(PG 결제액 0원)는 아직 지원하지 않는다고
+  // 명시돼 있음(PaymentServiceImpl.pay() 주석) — 최소 1원은 PG로 결제되게 강제.
+  const maxUsablePoints = Math.max(0, Math.min(points, total - 1))
   const pointsUsed = Math.max(0, Math.min(Number(pointsInput) || 0, maxUsablePoints))
   const finalAmount = total - pointsUsed
 
@@ -314,11 +316,12 @@ export function BookingDialog({
     setPendingPaymentError(null)
     ;(async () => {
       try {
-        // usedPoint는 의도적으로 안 넘긴다: 여기서 넘기면 백엔드 PointService가 실 포인트
-        // 잔액에서 차감을 시도하는데, 실 포인트 적립/조회 API가 아직 없어서 실 잔액은 사실상
-        // 항상 0에 가깝다 — 잘못 넘기면 포인트 사용 자체가 실패로 막힘. 그래서 토스 결제창엔
-        // 항상 좌석 정가(gross)를 그대로 청구하고, "포인트 사용" 할인은 지금처럼 mock 장부에만
-        // 반영한다(finalAmount는 화면 표시/마이페이지 mock 기록용).
+        // usedPoint를 실제로 넘겨서 백엔드가 포인트를 차감하게 한다(PaymentServiceImpl.pay()가
+        // pointService.usePoint() 호출 + pgAmount = amount - usedPoint로 PG 결제 준비).
+        // 주의: CreatePaymentResponse.amount는 항상 주문 원금(gross)을 돌려준다 — 포인트 차감 후
+        // 실제 PG 청구액이 아니다. 그래서 토스 결제창을 열 때는 paid.amount가 아니라 프론트에서
+        // 직접 계산한 순수 결제액(finalAmount = heldTicket.price - pointsUsed)을 써야 서버가
+        // pgClient.ready()에 등록해둔 금액과 일치한다(불일치 시 결제 승인 단계에서 막힘).
         const created = await orderApi.createOrder(
           heldTicket.ticketId,
           authUser.userId,
@@ -326,13 +329,12 @@ export function BookingDialog({
           heldTicket.holdExpiredAt,
           heldTicket.holdKey,
         )
-        const paid = await orderApi.pay(created.orderId, heldTicket.price)
+        const paid = await orderApi.pay(created.orderId, heldTicket.price, pointsUsed)
         if (cancelled) return
 
-        // 포인트 잔액을 읽어오는 실 API가 아직 없어서(다음 정리 대상), 마이페이지 포인트 내역은
-        // 여전히 mock 장부로 관리한다. 결제창으로 넘어가면 이 다이얼로그의 로컬 상태가 사라지므로
-        // /payment/success가 이어받을 수 있게 paymentId 기준으로 남겨둔다(실 결제 완료와 무관한
-        // 부가 정보라 여기서 실패해도 결제 진행 자체는 막지 않음).
+        // 결제창으로 넘어가면 이 다이얼로그의 로컬 상태가 사라지므로 /payment/success가
+        // 이어받을 수 있게 paymentId 기준으로 남겨둔다(실 결제 완료와 무관한 부가 정보라
+        // 여기서 실패해도 결제 진행 자체는 막지 않음).
         const selectedSeatPayload = seatSelections.map(({ zone, labels }) => ({ zone, seatLabels: labels }))
         writePendingPaymentLedger(paid.paymentId, {
           buyerId: String(authUser.userId),
@@ -343,7 +345,11 @@ export function BookingDialog({
           pointsUsed,
         })
 
-        setPendingPayment({ paymentId: paid.paymentId, tossOrderId: paid.orderId, amount: paid.amount })
+        setPendingPayment({
+          paymentId: paid.paymentId,
+          tossOrderId: paid.orderId,
+          amount: heldTicket.price - pointsUsed,
+        })
         // 결제가 성공하면 티켓 상태가 이미 RESERVED로 넘어가므로, 다이얼로그 닫힐 때
         // release-on-close effect가 이걸 다시 풀어버리지 않도록 hold 상태를 지운다.
         setHeldTicket(null)

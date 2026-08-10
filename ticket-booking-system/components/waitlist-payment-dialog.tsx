@@ -118,7 +118,9 @@ export function WaitlistPaymentDialog({
   const expired = remaining <= 0
   const price = zonePrice ?? 0
 
-  const maxUsablePoints = Math.max(0, Math.min(points, price))
+  // price - 1로 캡: 백엔드가 포인트 전액 결제(PG 결제액 0원)는 아직 지원하지 않는다고
+  // 명시돼 있음(PaymentServiceImpl.pay() 주석) — 최소 1원은 PG로 결제되게 강제.
+  const maxUsablePoints = Math.max(0, Math.min(points, price - 1))
   const pointsUsed = Math.max(0, Math.min(Number(pointsInput) || 0, maxUsablePoints))
   const finalAmount = price - pointsUsed
 
@@ -145,7 +147,10 @@ export function WaitlistPaymentDialog({
         // (order-service의 CreateOrderRequest가 이 값들을 요구함 — booking-dialog와 동일한 이유).
         const hold = await performanceApi.holdTicket(ticketId, authUser.userId, 'STANDBY')
         const created = await orderApi.createOrder(hold.ticketId, authUser.userId, hold.price, hold.holdExpiredAt, hold.holdKey)
-        const paid = await orderApi.pay(created.orderId, hold.price)
+        // usedPoint를 실제로 넘겨 백엔드가 포인트를 차감하게 한다. paid.amount는 항상 주문
+        // 원금(gross)이라 토스 결제창엔 대신 순수 결제액(hold.price - pointsUsed)을 써야 한다
+        // (자세한 이유는 booking-dialog.tsx의 동일 지점 주석 참고).
+        const paid = await orderApi.pay(created.orderId, hold.price, pointsUsed)
         if (cancelled) return
 
         writePendingPaymentLedger(paid.paymentId, {
@@ -158,7 +163,11 @@ export function WaitlistPaymentDialog({
           standbyCleanup: { userId: String(authUser.userId), standbyId },
         })
 
-        setPendingPayment({ paymentId: paid.paymentId, tossOrderId: paid.orderId, amount: paid.amount })
+        setPendingPayment({
+          paymentId: paid.paymentId,
+          tossOrderId: paid.orderId,
+          amount: hold.price - pointsUsed,
+        })
       } catch (e) {
         if (cancelled) return
         const message = e instanceof OrderApiError ? `${e.code ?? ''} ${e.message}`.trim() : '주문 생성에 실패했습니다.'
