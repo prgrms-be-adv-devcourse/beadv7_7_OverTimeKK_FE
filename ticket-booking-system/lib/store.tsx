@@ -12,6 +12,7 @@ import {
 import { toast } from 'sonner'
 import { api } from './api'
 import { performanceApi } from './performance-api'
+import { orderApi } from './order-api'
 import { userApi, type SignUpBusinessInput, type SignUpIndividualInput } from './user-api'
 import { readAuth, writeAuth, clearAuth, type StoredAuth, type StoredAuthUser } from './auth-store'
 import type { UserRole, Zone } from './types'
@@ -30,6 +31,7 @@ interface AppContextValue {
   /** 실 로그인 사용자의 mock 장부 ID(문자열로 변환된 authUser.userId). 로그인 안 했으면 null. */
   userId: string | null
   userName: string
+  /** 실 포인트 잔액(order-service `GET /api/points/balance`). 비로그인/조회 실패 시 0. */
   points: number
   /** 데이터 변경 카운터 — 구독 컴포넌트 리렌더 트리거 */
   version: number
@@ -108,13 +110,35 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }, [auth, roleState])
 
   // 실 로그인 사용자가 확인될 때마다(마운트 시 복원 포함) mock 장부 레코드를 보장해둔다 —
-  // 없으면 포인트 0으로 새로 만들고, 있으면 그대로 둔다.
+  // 없으면 포인트 0으로 새로 만들고, 있으면 그대로 둔다. (판매자 마이페이지 등 아직
+  // mock 장부만 쓰는 화면을 위해 여전히 필요 — 아래 실 포인트 잔액 조회와는 별개)
   useEffect(() => {
     if (auth) {
       api.ensureMockUser(String(auth.user.userId), auth.user.username)
       setVersion((v) => v + 1)
     }
   }, [auth])
+
+  // 헤더/예매 다이얼로그 등 앱 전역에서 쓰는 포인트 잔액은 실 API 기준.
+  // version이 바뀔 때마다(결제 성공 후 payment/success의 mock createOrder 호출 포함) 다시 조회해서
+  // 최신 잔액을 반영한다. 백엔드 미기동 등으로 실패해도 조용히 무시(0 유지) — mock만으로도 앱은 동작해야 함.
+  const [pointsBalance, setPointsBalance] = useState(0)
+  useEffect(() => {
+    if (!auth) {
+      setPointsBalance(0)
+      return
+    }
+    let cancelled = false
+    orderApi
+      .getPointBalance(auth.user.userId)
+      .then((res) => {
+        if (!cancelled) setPointsBalance(res.balance)
+      })
+      .catch(() => {})
+    return () => {
+      cancelled = true
+    }
+  }, [auth, version])
 
   const setRole = useCallback(
     (next: UserRole) => {
@@ -196,7 +220,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }, [])
 
   const userId = auth ? String(auth.user.userId) : null
-  const user = userId ? api.getUser(userId) : undefined
 
   const withRefresh = useCallback(
     <TArgs extends unknown[], TReturn>(fn: (...args: TArgs) => TReturn) =>
@@ -214,7 +237,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       setRole,
       userId,
       userName: auth?.user.username ?? '게스트',
-      points: user?.points ?? 0,
+      points: pointsBalance,
       version,
       refresh,
       performancesLoaded,
@@ -251,7 +274,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setRole,
     version,
     userId,
-    user?.points,
+    pointsBalance,
     refresh,
     performancesLoaded,
     auth,

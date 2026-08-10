@@ -1,7 +1,7 @@
 /**
- * 주문/결제 도메인 실제 백엔드 연동 클라이언트
+ * 주문/결제/포인트 도메인 실제 백엔드 연동 클라이언트
  * ------------------------------------------------------------------
- * order-service (기본 http://localhost:8082) 의 주문 생성/결제 승인/취소 API.
+ * order-service (기본 http://localhost:8082) 의 주문 생성/결제 승인/취소 + 포인트 잔액/내역 조회 API.
  * 2026-07-28 기준 order-service의 TicketClient가 MockTicketClient에서
  * performance-service(8083) 실호출 TicketApiClient로 교체되어, 주문 생성 시
  * ticketId에 해당하는 실제 좌석 가격이 그대로 반영된다(더 이상 5만원 고정 아님).
@@ -83,10 +83,46 @@ export interface OrderHistoryItem {
   totalAmount: number
 }
 
+export interface PointBalance {
+  userId: number
+  balance: number
+}
+
+export type PointLogType = 'EARN' | 'USE' | 'CANCELLED' | 'PARTIAL_CANCELLED'
+
+/** amount/balanceAfter는 이미 부호가 반영된 값(EARN/CANCELLED/PARTIAL_CANCELLED는 +, USE는 -) — 별도로 type에 따라 부호를 뒤집지 말 것 */
+export interface PointHistoryItem {
+  id: number
+  transactedAt: string
+  type: PointLogType
+  amount: number
+  balanceAfter: number
+}
+
+/** Spring Data Page의 기본 JSON 직렬화 형태 (필요한 필드만) */
+export interface PageResult<T> {
+  content: T[]
+  totalElements: number
+  totalPages: number
+  number: number
+  size: number
+  last: boolean
+}
+
 export const orderApi = {
   /** GET /api/order?userId= — 결제 완료된 주문 내역 */
   getOrderHistory(userId: number): Promise<OrderHistoryItem[]> {
     return request<OrderHistoryItem[]>(`/api/order?userId=${userId}`)
+  },
+
+  /** GET /api/points/balance?userId= — 현재 포인트 잔액 */
+  getPointBalance(userId: number): Promise<PointBalance> {
+    return request<PointBalance>(`/api/points/balance?userId=${userId}`)
+  },
+
+  /** GET /api/points?userId=&page=&size= — 포인트 내역, 항상 최신순(서버가 정렬 후 페이징) */
+  getPointHistory(userId: number, page = 0, size = 10): Promise<PageResult<PointHistoryItem>> {
+    return request<PageResult<PointHistoryItem>>(`/api/points?userId=${userId}&page=${page}&size=${size}`)
   },
 
   /**

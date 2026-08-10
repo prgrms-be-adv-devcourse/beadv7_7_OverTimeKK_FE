@@ -1,9 +1,8 @@
 'use client'
 
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Coins, Ticket, ArrowLeftRight } from 'lucide-react'
 import { useApp } from '@/lib/store'
-import { api } from '@/lib/api'
 import { formatKRW, formatDateTime } from '@/lib/domain'
 import { Button } from '@/components/ui/button'
 import {
@@ -15,12 +14,24 @@ import {
   DialogFooter,
 } from '@/components/ui/dialog'
 import Link from 'next/link'
-import { orderApi, OrderApiError, type OrderHistoryItem } from '@/lib/order-api'
+import {
+  orderApi,
+  OrderApiError,
+  type OrderHistoryItem,
+  type PointHistoryItem,
+} from '@/lib/order-api'
 import { LoginRequired } from '@/components/login-required'
 
+const POINT_TYPE_LABEL: Record<PointHistoryItem['type'], string> = {
+  EARN: '적립',
+  USE: '사용',
+  CANCELLED: '사용취소',
+  PARTIAL_CANCELLED: '부분취소',
+}
+
 export default function MyPage() {
-  const { userId, role, version, authUser, authLoading } = useApp()
-  const [selectedPointId, setSelectedPointId] = useState<string | null>(null)
+  const { role, points, authUser, authLoading } = useApp()
+  const [selectedPointId, setSelectedPointId] = useState<number | null>(null)
   const [selectedOrderId, setSelectedOrderId] = useState<number | null>(null)
 
   const [orders, setOrders] = useState<OrderHistoryItem[]>([])
@@ -49,14 +60,61 @@ export default function MyPage() {
     }
   }, [refreshTick, authUser])
 
-  const points = useMemo(() => (userId ? api.listPoints(userId) : []), [userId, version])
+  // 상단 잔액은 useApp().points(store.tsx가 실 API로 관리)를 그대로 쓴다 — 헤더와 같은 값을
+  // 유지하기 위해 여기서 따로 조회하지 않는다. 아래는 내역 리스트 전용 상태.
+  const [pointHistory, setPointHistory] = useState<PointHistoryItem[]>([])
+  const [pointsLoading, setPointsLoading] = useState(true)
+  const [pointsError, setPointsError] = useState<string | null>(null)
+  const [pointsPage, setPointsPage] = useState(0)
+  const [pointsHasMore, setPointsHasMore] = useState(false)
+  const [pointsLoadingMore, setPointsLoadingMore] = useState(false)
+
+  useEffect(() => {
+    if (!authUser) return
+    let cancelled = false
+    setPointsLoading(true)
+    orderApi
+      .getPointHistory(authUser.userId, 0)
+      .then((history) => {
+        if (cancelled) return
+        setPointHistory(history.content)
+        setPointsPage(0)
+        setPointsHasMore(!history.last)
+      })
+      .catch((e) => {
+        if (cancelled) return
+        setPointsError(e instanceof OrderApiError ? `${e.code ?? ''} ${e.message}` : '포인트 내역을 불러오지 못했습니다.')
+      })
+      .finally(() => {
+        if (!cancelled) setPointsLoading(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [refreshTick, authUser])
+
+  async function loadMorePoints() {
+    if (!authUser) return
+    setPointsLoadingMore(true)
+    try {
+      const nextPage = pointsPage + 1
+      const history = await orderApi.getPointHistory(authUser.userId, nextPage)
+      setPointHistory((prev) => [...prev, ...history.content])
+      setPointsPage(nextPage)
+      setPointsHasMore(!history.last)
+    } catch (e) {
+      alert(e instanceof OrderApiError ? `${e.code ?? ''} ${e.message}` : '포인트 내역을 더 불러오지 못했습니다.')
+    } finally {
+      setPointsLoadingMore(false)
+    }
+  }
 
   const selectedOrder = selectedOrderId
     ? orders.find((o) => o.orderId === selectedOrderId) ?? null
     : null
 
   const selectedPoint = selectedPointId
-    ? points.find((p) => p.id === selectedPointId) ?? null
+    ? pointHistory.find((p) => p.id === selectedPointId) ?? null
     : null
 
   if (authLoading) return null
@@ -79,7 +137,7 @@ export default function MyPage() {
           </div>
           <div className="flex items-center gap-2 rounded-full bg-warning/10 px-3 py-2 text-warning">
             <Coins className="size-4" />
-            <span className="font-semibold">{formatKRW((userId && api.getUser(userId)?.points) || 0)}</span>
+            <span className="font-semibold">{formatKRW(points)}</span>
           </div>
         </div>
       </div>
@@ -129,27 +187,45 @@ export default function MyPage() {
           <h2 className="font-semibold">포인트 내역</h2>
         </div>
         <div className="space-y-3">
-          {points.length === 0 ? (
+          {pointsLoading ? (
+            <p className="text-sm text-muted-foreground">불러오는 중...</p>
+          ) : pointsError ? (
+            <p className="text-sm text-destructive">{pointsError}</p>
+          ) : pointHistory.length === 0 ? (
             <p className="text-sm text-muted-foreground">포인트 내역이 없습니다.</p>
           ) : (
-            points.map((point) => (
-              <button
-                key={point.id}
-                type="button"
-                onClick={() => setSelectedPointId(point.id)}
-                className="flex w-full items-center justify-between gap-2 rounded-lg border border-border p-3 text-left text-sm transition-colors hover:border-primary/40 hover:bg-secondary/20"
-              >
-                <div>
-                  <p className="font-medium">{point.reason}</p>
-                  <p className="text-xs text-muted-foreground">{formatDateTime(point.createdAt)}</p>
-                </div>
-                <span
-                  className={point.type === 'EARN' ? 'text-success font-semibold' : 'text-destructive font-semibold'}
+            <>
+              {pointHistory.map((point) => (
+                <button
+                  key={point.id}
+                  type="button"
+                  onClick={() => setSelectedPointId(point.id)}
+                  className="flex w-full items-center justify-between gap-2 rounded-lg border border-border p-3 text-left text-sm transition-colors hover:border-primary/40 hover:bg-secondary/20"
                 >
-                  {point.type === 'EARN' ? '+' : '-'}{formatKRW(point.amount)}
-                </span>
-              </button>
-            ))
+                  <div>
+                    <p className="font-medium">{POINT_TYPE_LABEL[point.type]}</p>
+                    <p className="text-xs text-muted-foreground">{formatDateTime(point.transactedAt)}</p>
+                  </div>
+                  <span
+                    className={point.amount >= 0 ? 'text-success font-semibold' : 'text-destructive font-semibold'}
+                  >
+                    {point.amount >= 0 ? '+' : ''}
+                    {formatKRW(point.amount)}
+                  </span>
+                </button>
+              ))}
+              {pointsHasMore && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="w-full"
+                  disabled={pointsLoadingMore}
+                  onClick={loadMorePoints}
+                >
+                  {pointsLoadingMore ? '불러오는 중...' : '더 보기'}
+                </Button>
+              )}
+            </>
           )}
         </div>
       </section>
@@ -220,29 +296,30 @@ export default function MyPage() {
                   <ArrowLeftRight className="size-5 text-primary" />
                   포인트 상세
                 </DialogTitle>
-                <DialogDescription>{formatDateTime(selectedPoint.createdAt)}</DialogDescription>
+                <DialogDescription>{formatDateTime(selectedPoint.transactedAt)}</DialogDescription>
               </DialogHeader>
 
               <div className="space-y-2 text-sm text-muted-foreground">
                 <div className="flex items-center justify-between">
-                  <span className="font-medium text-foreground">사유</span>
-                  <span>{selectedPoint.reason}</span>
-                </div>
-                <div className="flex items-center justify-between">
                   <span className="font-medium text-foreground">유형</span>
-                  <span>{selectedPoint.type === 'EARN' ? '적립' : '사용'}</span>
+                  <span>{POINT_TYPE_LABEL[selectedPoint.type]}</span>
                 </div>
                 <div className="flex items-center justify-between">
                   <span className="font-medium text-foreground">금액</span>
                   <span
-                    className={selectedPoint.type === 'EARN' ? 'text-success font-semibold' : 'text-destructive font-semibold'}
+                    className={selectedPoint.amount >= 0 ? 'text-success font-semibold' : 'text-destructive font-semibold'}
                   >
-                    {selectedPoint.type === 'EARN' ? '+' : '-'}{formatKRW(selectedPoint.amount)}
+                    {selectedPoint.amount >= 0 ? '+' : ''}
+                    {formatKRW(selectedPoint.amount)}
                   </span>
                 </div>
                 <div className="flex items-center justify-between">
+                  <span className="font-medium text-foreground">거래 후 잔액</span>
+                  <span>{formatKRW(selectedPoint.balanceAfter)}</span>
+                </div>
+                <div className="flex items-center justify-between">
                   <span className="font-medium text-foreground">일시</span>
-                  <span>{formatDateTime(selectedPoint.createdAt)}</span>
+                  <span>{formatDateTime(selectedPoint.transactedAt)}</span>
                 </div>
               </div>
             </>

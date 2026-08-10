@@ -3,6 +3,10 @@
  * ------------------------------------------------------------------
  * user-service (기본 http://localhost:8081) 의 회원가입/로그인/토큰갱신/내정보조회 API.
  *
+ * 회원가입은 백엔드에서 이메일 인증을 강제한다(`UserService.signUpIndividual/signUpBusiness`가
+ * 시작하자마자 `requireVerifiedEmail()` 호출) — sendVerificationCode/confirmVerificationCode로
+ * 먼저 인증을 마치지 않으면 가입 요청 자체가 USR400_001로 거부된다.
+ *
  * userType(Role)은 'INDIVIDUAL' | 'BUSINESS' — 프론트의 role('BUYER'|'SELLER')과는
  * 다른 축의 개념이다(주문 화면에서 쓰는 role 토글과 이 로그인 상태는 lib/store.tsx에서
  * 의도적으로 분리되어 있음). 개인은 구매, 사업자는 공연 등록/판매 목적으로 가입한다고 가정.
@@ -47,6 +51,8 @@ export class UserApiError extends Error {
 }
 
 const ERROR_MESSAGES: Record<string, string> = {
+  USR400_001: '이메일 인증을 먼저 완료해 주세요.',
+  USR400_002: '인증번호가 올바르지 않습니다.',
   USR409_001: '이미 사용 중인 아이디입니다.',
   USR409_002: '이미 사용 중인 이메일입니다.',
   USR409_003: '이미 등록된 사업자번호입니다.',
@@ -109,6 +115,23 @@ export interface SignUpBusinessInput extends SignUpIndividualInput {
 }
 
 export const userApi = {
+  // POST /api/users/email/verification-codes — 이메일로 6자리 인증코드 발송(TTL 존재, 재발송 시 갱신)
+  async sendVerificationCode(email: string): Promise<void> {
+    await request<void>('/api/users/email/verification-codes', {
+      method: 'POST',
+      body: JSON.stringify({ email }),
+    })
+  },
+
+  // POST /api/users/email/verification — 인증코드 확인. 성공 시 서버에 "인증됨" 마커가 남고
+  // 회원가입 시점에 1회성으로 소비된다(가입 전까지만 유효, TTL 지나면 다시 인증해야 함).
+  async confirmVerificationCode(email: string, code: string): Promise<void> {
+    await request<void>('/api/users/email/verification', {
+      method: 'POST',
+      body: JSON.stringify({ email, code }),
+    })
+  },
+
   // POST /api/users/signup/individual
   async signUpIndividual(input: SignUpIndividualInput): Promise<UserResponse> {
     const data = await request<UserResponse>('/api/users/signup/individual', {
