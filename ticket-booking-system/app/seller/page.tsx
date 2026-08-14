@@ -189,6 +189,7 @@ export default function SellerPage() {
       const { uploadUrl, objectKey } = await imagesApi.getUploadUrl(
         file.name,
         file.type || 'application/octet-stream',
+        file.size
       )
 
       const uploadResponse = await fetch(uploadUrl, {

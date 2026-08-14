@@ -271,21 +271,13 @@ const S3_BUCKET = 'team01-reseat-bucket'
 const S3_REGION = 'ap-northeast-2'
 
 export const imagesApi = {
-  /**
-   * POST /api/images/upload-url — 포스터 등 이미지의 S3 presigned PUT URL 발급.
-   * S3ImageController가 ImgUploadUrlResponse를 ApiResponse envelope 없이 그대로 반환하므로
-   * (다른 performance-service 엔드포인트와 다름) request<T> 헬퍼를 쓰지 않는다.
-   */
-  async getUploadUrl(fileName: string, contentType: string): Promise<ImageUploadUrl> {
-    const res = await fetch(`${BASE_URL}/api/images/upload-url`, {
+  /** POST /api/images/upload-url — 포스터 등 이미지의 S3 presigned PUT URL 발급. 다른 엔드포인트와 동일한 ApiResponse envelope으로 응답한다. */
+  getUploadUrl(fileName: string, contentType: string, fileSize: number): Promise<ImageUploadUrl> {
+    return request<ImageUploadUrl>('/api/images/upload-url', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ fileName, contentType }),
+      body: JSON.stringify({ fileName, contentType, fileSize }),
     })
-    if (!res.ok) {
-      throw new Error('이미지 업로드 준비에 실패했습니다.')
-    }
-    return res.json() as Promise<ImageUploadUrl>
   },
 
   /** presigned PUT URL로 업로드한 이미지의 공개 조회 URL */
