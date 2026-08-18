@@ -66,7 +66,7 @@ export function WaitlistPaymentDialog({
   session: PerformanceSession
   onSettled: () => void
 }) {
-  const { points, authUser } = useApp()
+  const { points, authUser, accessToken } = useApp()
   const [remaining, setRemaining] = useState(() => remainingSeconds(heldSince))
   const [processing, setProcessing] = useState(false)
   const [step, setStep] = useState<'price' | 'pay'>('price')
@@ -135,7 +135,7 @@ export function WaitlistPaymentDialog({
   // booking-dialog와 동일한 구조(자세한 설명은 그쪽 주석 참고).
   useEffect(() => {
     if (step !== 'pay' || pendingPayment || expired) return
-    if (!authUser) {
+    if (!authUser || !accessToken) {
       setPendingPaymentError('로그인이 필요합니다.')
       return
     }
@@ -145,12 +145,12 @@ export function WaitlistPaymentDialog({
       try {
         // 주문 생성 전에 반드시 hold를 호출해서 서버가 계산한 price/만료시각/holdKey를 받아야 한다
         // (order-service의 CreateOrderRequest가 이 값들을 요구함 — booking-dialog와 동일한 이유).
-        const hold = await performanceApi.holdTicket(ticketId, authUser.userId, 'STANDBY')
-        const created = await orderApi.createOrder(hold.ticketId, authUser.userId, hold.price, hold.holdExpiredAt, hold.holdKey)
+        const hold = await performanceApi.holdTicket(ticketId, accessToken, 'STANDBY')
+        const created = await orderApi.createOrder(hold.ticketId, accessToken, hold.price, hold.holdExpiredAt, hold.holdKey)
         // usedPoint를 실제로 넘겨 백엔드가 포인트를 차감하게 한다. paid.amount는 항상 주문
         // 원금(gross)이라 토스 결제창엔 대신 순수 결제액(hold.price - pointsUsed)을 써야 한다
         // (자세한 이유는 booking-dialog.tsx의 동일 지점 주석 참고).
-        const paid = await orderApi.pay(created.orderId, hold.price, pointsUsed)
+        const paid = await orderApi.pay(created.orderId, hold.price, accessToken, pointsUsed)
         if (cancelled) return
 
         writePendingPaymentLedger(paid.paymentId, {
@@ -178,16 +178,16 @@ export function WaitlistPaymentDialog({
       cancelled = true
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [step, pendingPayment, expired, authUser, ticketId, price])
+  }, [step, pendingPayment, expired, authUser, accessToken, ticketId, price])
 
   async function handleCancel() {
-    if (!authUser) {
+    if (!authUser || !accessToken) {
       toast.error('로그인이 필요합니다.')
       return
     }
     setProcessing(true)
     try {
-      await standbyApi.cancelZone(standbyId, zone, authUser.userId)
+      await standbyApi.cancelZone(standbyId, zone, accessToken)
       standbyStore.removeZone(String(authUser.userId), standbyId, zone)
       toast.info('우선 예매를 취소했습니다.', {
         description: '대기열에서 취소 처리되었습니다.',

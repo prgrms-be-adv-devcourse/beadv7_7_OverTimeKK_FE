@@ -12,7 +12,7 @@ export interface StandbySummaryEntry {
 const POLL_INTERVAL_MS = 15000
 
 /** 내 대기 신청 목록을 로컬 저장소 기준으로 조회하고, 각 건의 순위/매칭 상태를 주기적으로 갱신한다. */
-export function useMyStandby(userId: string, standbyUserId: number) {
+export function useMyStandby(userId: string, accessToken: string) {
   const [entries, setEntries] = useState<StandbySummaryEntry[]>([])
   const [loading, setLoading] = useState(false)
 
@@ -26,7 +26,7 @@ export function useMyStandby(userId: string, standbyUserId: number) {
     const results = await Promise.all(
       records.map(async (record): Promise<StandbySummaryEntry | null> => {
         try {
-          const detail = await standbyApi.get(record.standbyId, standbyUserId)
+          const detail = await standbyApi.get(record.standbyId, accessToken)
           if (detail.zoneRanks.some((z) => z.isHeld)) {
             standbyStore.markHeld(userId, record.standbyId)
           } else {
@@ -48,7 +48,7 @@ export function useMyStandby(userId: string, standbyUserId: number) {
     )
     setEntries(results.filter((r): r is StandbySummaryEntry => r != null))
     setLoading(false)
-  }, [userId, standbyUserId])
+  }, [userId, accessToken])
 
   useEffect(() => {
     refresh()

@@ -53,7 +53,7 @@ export function BookingDialog({
   zoneRows: ZoneRow[]
   initialZone?: Zone | null
 }) {
-  const { points, heldSeat, holdSeat, releaseSeat, authUser } = useApp()
+  const { points, heldSeat, holdSeat, releaseSeat, authUser, accessToken } = useApp()
 
   const heldSeatsForThisSession = useMemo<Record<Zone, string[]>>(() => {
     const empty: Record<Zone, string[]> = { VIP: [], R: [], S: [], A: [] }
@@ -275,14 +275,14 @@ export function BookingDialog({
   // "좌석 선택 완료" 클릭 시점에 실제로 좌석을 hold한다(STEP1→STEP2 전환). 여기서 받은
   // holdKey/holdExpiredAt을 STEP3 결제까지 그대로 들고 간다 — STEP3에서 다시 hold하지 않는다.
   async function handleConfirmSeatSelection() {
-    if (!selectedRealTicket || !authUser) {
+    if (!selectedRealTicket || !authUser || !accessToken) {
       setStep('price')
       return
     }
     setHoldingTicket(true)
     setHoldError(null)
     try {
-      const hold = await performanceApi.holdTicket(selectedRealTicket.ticketId, authUser.userId, 'GENERAL')
+      const hold = await performanceApi.holdTicket(selectedRealTicket.ticketId, accessToken, 'GENERAL')
       setHeldTicket(hold)
       setStep('price')
     } catch (e) {
@@ -308,7 +308,7 @@ export function BookingDialog({
   // heldTicket을 그대로 재사용한다.
   useEffect(() => {
     if (step !== 'pay' || pendingPayment) return
-    if (!authUser || !heldTicket) {
+    if (!authUser || !accessToken || !heldTicket) {
       setPendingPaymentError('선택한 좌석 정보를 찾을 수 없습니다. 좌석을 다시 선택해 주세요.')
       return
     }
@@ -324,12 +324,12 @@ export function BookingDialog({
         // pgClient.ready()에 등록해둔 금액과 일치한다(불일치 시 결제 승인 단계에서 막힘).
         const created = await orderApi.createOrder(
           heldTicket.ticketId,
-          authUser.userId,
+          accessToken,
           heldTicket.price,
           heldTicket.holdExpiredAt,
           heldTicket.holdKey,
         )
-        const paid = await orderApi.pay(created.orderId, heldTicket.price, pointsUsed)
+        const paid = await orderApi.pay(created.orderId, heldTicket.price, accessToken, pointsUsed)
         if (cancelled) return
 
         // 결제창으로 넘어가면 이 다이얼로그의 로컬 상태가 사라지므로 /payment/success가
@@ -364,7 +364,7 @@ export function BookingDialog({
       cancelled = true
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [step, pendingPayment, authUser, heldTicket])
+  }, [step, pendingPayment, authUser, accessToken, heldTicket])
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>

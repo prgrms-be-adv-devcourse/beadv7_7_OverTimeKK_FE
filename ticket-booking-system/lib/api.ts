@@ -11,7 +11,6 @@ import { computeRefund, NOW, parseDateTime } from './domain'
 import { getPerformanceExtras } from './performance-extras'
 import type { RealPerformance, RealSession } from './performance-api'
 import {
-  PLATFORM_FEE_RATE,
   ZONES,
   type Hall,
   type Order,
@@ -20,7 +19,6 @@ import {
   type PerformanceSession,
   type PointTransaction,
   type SeatInventory,
-  type Settlement,
   type User,
   type Zone,
   type ZonePrice,
@@ -60,7 +58,6 @@ const db = {
   orders: [] as Order[],
   payments: [] as Payment[],
   points: [] as PointTransaction[],
-  settlements: [] as Settlement[],
 }
 
 export type DbSnapshot = typeof db
@@ -259,15 +256,6 @@ export const api = {
       db.points
         .filter((p) => p.userId === userId)
         .sort((a, b) => b.createdAt.localeCompare(a.createdAt)),
-    )
-  },
-
-  // GET /api/sellers/{id}/settlements
-  listSettlements(sellerId: string): Settlement[] {
-    return clone(
-      db.settlements
-        .filter((s) => s.sellerId === sellerId)
-        .sort((a, b) => b.settledAt.localeCompare(a.settledAt)),
     )
   },
 
@@ -564,5 +552,3 @@ function refreshSoldOut(performanceId: string): void {
   const allSold = invs.length > 0 && invs.every((i) => i.sold >= i.total)
   perf.status = allSold ? 'SOLD_OUT' : 'ON_SALE'
 }
-
-export { PLATFORM_FEE_RATE }

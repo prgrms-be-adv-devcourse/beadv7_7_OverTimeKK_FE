@@ -31,12 +31,12 @@ const sellerNav = [
 ]
 
 export function SiteHeader() {
-  const { role, setRole, userId, userName, points, authUser, logoutAuth } = useApp()
+  const { role, setRole, userId, userName, points, authUser, accessToken, logoutAuth } = useApp()
   const pathname = usePathname()
   const router = useRouter()
   const nav = role === 'BUYER' ? buyerNav : sellerNav
 
-  const { entries } = useMyStandby(userId ?? '', authUser?.userId ?? 0)
+  const { entries } = useMyStandby(userId ?? '', accessToken ?? '')
   const offeredEntries =
     role === 'BUYER'
       ? entries

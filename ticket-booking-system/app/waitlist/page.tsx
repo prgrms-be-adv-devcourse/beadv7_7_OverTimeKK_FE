@@ -25,8 +25,8 @@ import { LoginRequired } from '@/components/login-required'
 import type { Zone } from '@/lib/types'
 
 export default function WaitlistPage() {
-  const { userId, role, authUser, authLoading } = useApp()
-  const { entries, refresh } = useMyStandby(userId ?? '', authUser?.userId ?? 0)
+  const { userId, role, authUser, accessToken, authLoading } = useApp()
+  const { entries, refresh } = useMyStandby(userId ?? '', accessToken ?? '')
   const [selectedStandbyId, setSelectedStandbyId] = useState<number | null>(null)
   const [payingStandbyId, setPayingStandbyId] = useState<number | null>(null)
 
@@ -46,9 +46,9 @@ export default function WaitlistPage() {
     : undefined
 
   async function handleCancelAll(entry: StandbySummaryEntry) {
-    if (!authUser) return
+    if (!authUser || !accessToken) return
     try {
-      await standbyApi.cancel(entry.record.standbyId, authUser.userId)
+      await standbyApi.cancel(entry.record.standbyId, accessToken)
       standbyStore.remove(String(authUser.userId), entry.record.standbyId)
       refresh()
     } catch (e) {
@@ -57,9 +57,9 @@ export default function WaitlistPage() {
   }
 
   async function handleCancelZone(entry: StandbySummaryEntry, zone: Zone) {
-    if (!authUser) return
+    if (!authUser || !accessToken) return
     try {
-      await standbyApi.cancelZone(entry.record.standbyId, zone, authUser.userId)
+      await standbyApi.cancelZone(entry.record.standbyId, zone, accessToken)
       standbyStore.removeZone(String(authUser.userId), entry.record.standbyId, zone)
       refresh()
     } catch (e) {

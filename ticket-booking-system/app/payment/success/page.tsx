@@ -13,7 +13,7 @@ import { useApp } from '@/lib/store'
 
 function PaymentSuccessInner() {
   const params = useSearchParams()
-  const { createOrder } = useApp()
+  const { createOrder, accessToken } = useApp()
   const [state, setState] = useState<'confirming' | 'done' | 'error'>('confirming')
   const [error, setError] = useState<string | null>(null)
 
@@ -27,9 +27,14 @@ function PaymentSuccessInner() {
       setError('필수 결제 정보가 없습니다.')
       return
     }
+    if (!accessToken) {
+      setState('error')
+      setError('로그인이 필요합니다.')
+      return
+    }
 
     orderApi
-      .confirm(paymentId, paymentKey)
+      .confirm(paymentId, paymentKey, accessToken)
       .then(() => {
         setState('done')
 
@@ -55,7 +60,7 @@ function PaymentSuccessInner() {
         setError(e instanceof OrderApiError ? `${e.code ?? ''} ${e.message}`.trim() : '결제 승인에 실패했습니다.')
       })
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [params])
+  }, [params, accessToken])
 
   return (
     <div className="mx-auto flex max-w-md flex-col items-center gap-4 px-4 py-24 text-center">

@@ -36,7 +36,7 @@ export function WaitlistDialog({
   zones: Zone[]
   prefillZones?: Zone[]
 }) {
-  const { authUser } = useApp()
+  const { authUser, accessToken } = useApp()
   const [selected, setSelected] = useState<Zone[]>([])
   const [submitting, setSubmitting] = useState(false)
   const availableZones = zones
@@ -68,18 +68,20 @@ export function WaitlistDialog({
   }
 
   async function handleSubmit() {
-    if (!authUser) {
+    if (!authUser || !accessToken) {
       toast.error('로그인이 필요합니다.')
       return
     }
     setSubmitting(true)
     try {
-      const result = await standbyApi.create({
-        userId: authUser.userId,
-        performanceId: toBackendPerformanceId(performance.id),
-        sessionNum: session.sessionNum,
-        zones: selected,
-      })
+      const result = await standbyApi.create(
+        {
+          performanceId: toBackendPerformanceId(performance.id),
+          sessionNum: session.sessionNum,
+          zones: selected,
+        },
+        accessToken,
+      )
       standbyStore.add(String(authUser.userId), {
         standbyId: result.standbyId,
         performanceId: performance.id,

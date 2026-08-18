@@ -5,6 +5,8 @@ import { Coins, Ticket, ArrowLeftRight } from 'lucide-react'
 import { useApp } from '@/lib/store'
 import { formatKRW, formatDateTime } from '@/lib/domain'
 import { Button } from '@/components/ui/button'
+import { Badge } from '@/components/ui/badge'
+import { cn } from '@/lib/utils'
 import {
   Dialog,
   DialogContent,
@@ -18,6 +20,7 @@ import {
   orderApi,
   OrderApiError,
   type OrderHistoryItem,
+  type OrderHistoryStatus,
   type PointHistoryItem,
 } from '@/lib/order-api'
 import { LoginRequired } from '@/components/login-required'
@@ -29,8 +32,14 @@ const POINT_TYPE_LABEL: Record<PointHistoryItem['type'], string> = {
   PARTIAL_CANCELLED: '부분취소',
 }
 
+const ORDER_STATUS_META: Record<OrderHistoryStatus, { label: string; className: string }> = {
+  COMPLETED: { label: '예매완료', className: 'bg-success/15 text-success' },
+  CANCELLED: { label: '취소됨', className: 'bg-muted text-muted-foreground' },
+  EXPIRED: { label: '만료됨', className: 'bg-muted text-muted-foreground' },
+}
+
 export default function MyPage() {
-  const { role, points, authUser, authLoading } = useApp()
+  const { role, points, authUser, accessToken, authLoading } = useApp()
   const [selectedPointId, setSelectedPointId] = useState<number | null>(null)
   const [selectedOrderId, setSelectedOrderId] = useState<number | null>(null)
 
@@ -40,11 +49,11 @@ export default function MyPage() {
   const [refreshTick, setRefreshTick] = useState(0)
 
   useEffect(() => {
-    if (!authUser) return
+    if (!authUser || !accessToken) return
     let cancelled = false
     setOrdersLoading(true)
     orderApi
-      .getOrderHistory(authUser.userId)
+      .getOrderHistory(accessToken)
       .then((data) => {
         if (!cancelled) setOrders(data)
       })
@@ -58,7 +67,7 @@ export default function MyPage() {
     return () => {
       cancelled = true
     }
-  }, [refreshTick, authUser])
+  }, [refreshTick, authUser, accessToken])
 
   // 상단 잔액은 useApp().points(store.tsx가 실 API로 관리)를 그대로 쓴다 — 헤더와 같은 값을
   // 유지하기 위해 여기서 따로 조회하지 않는다. 아래는 내역 리스트 전용 상태.
@@ -70,11 +79,11 @@ export default function MyPage() {
   const [pointsLoadingMore, setPointsLoadingMore] = useState(false)
 
   useEffect(() => {
-    if (!authUser) return
+    if (!authUser || !accessToken) return
     let cancelled = false
     setPointsLoading(true)
     orderApi
-      .getPointHistory(authUser.userId, 0)
+      .getPointHistory(accessToken, 0)
       .then((history) => {
         if (cancelled) return
         setPointHistory(history.content)
@@ -91,14 +100,14 @@ export default function MyPage() {
     return () => {
       cancelled = true
     }
-  }, [refreshTick, authUser])
+  }, [refreshTick, authUser, accessToken])
 
   async function loadMorePoints() {
-    if (!authUser) return
+    if (!authUser || !accessToken) return
     setPointsLoadingMore(true)
     try {
       const nextPage = pointsPage + 1
-      const history = await orderApi.getPointHistory(authUser.userId, nextPage)
+      const history = await orderApi.getPointHistory(accessToken, nextPage)
       setPointHistory((prev) => [...prev, ...history.content])
       setPointsPage(nextPage)
       setPointsHasMore(!history.last)
@@ -118,7 +127,7 @@ export default function MyPage() {
     : null
 
   if (authLoading) return null
-  if (!authUser) return <LoginRequired message="마이페이지는 로그인 후 이용할 수 있습니다." />
+  if (!authUser || !accessToken) return <LoginRequired message="마이페이지는 로그인 후 이용할 수 있습니다." />
   if (role !== 'BUYER') {
     return (
       <div className="mx-auto max-w-5xl px-4 py-10">
@@ -167,6 +176,9 @@ export default function MyPage() {
                     <p className="font-medium">{order.performanceName}</p>
                     <p className="text-xs text-muted-foreground">{formatDateTime(order.orderedAt)}</p>
                   </div>
+                  <Badge className={cn('border-transparent', ORDER_STATUS_META[order.orderStatus].className)}>
+                    {ORDER_STATUS_META[order.orderStatus].label}
+                  </Badge>
                 </div>
                 <div className="mt-2 flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
                   <span>{order.zone} {order.quantity}매</span>
@@ -248,8 +260,11 @@ export default function MyPage() {
                   <Ticket className="size-5 text-primary" />
                   주문 상세
                 </DialogTitle>
-                <DialogDescription>
-                  {selectedOrder.performanceName} · {formatDateTime(selectedOrder.orderedAt)}
+                <DialogDescription className="flex items-center gap-2">
+                  <span>{selectedOrder.performanceName} · {formatDateTime(selectedOrder.orderedAt)}</span>
+                  <Badge className={cn('border-transparent', ORDER_STATUS_META[selectedOrder.orderStatus].className)}>
+                    {ORDER_STATUS_META[selectedOrder.orderStatus].label}
+                  </Badge>
                 </DialogDescription>
               </DialogHeader>
 
@@ -265,23 +280,25 @@ export default function MyPage() {
                 </div>
               </div>
 
-              <DialogFooter>
-                <Button
-                  variant="outline"
-                  onClick={async () => {
-                    if (!confirm('예매를 취소하시겠습니까?')) return
-                    try {
-                      await orderApi.cancelCompleted(selectedOrder.orderId)
-                      setSelectedOrderId(null)
-                      setRefreshTick((t) => t + 1)
-                    } catch (error) {
-                      alert(error instanceof OrderApiError ? `${error.code ?? ''} ${error.message}` : '예매 취소 실패')
-                    }
-                  }}
-                >
-                  예매 취소
-                </Button>
-              </DialogFooter>
+              {selectedOrder.orderStatus === 'COMPLETED' && (
+                <DialogFooter>
+                  <Button
+                    variant="outline"
+                    onClick={async () => {
+                      if (!confirm('예매를 취소하시겠습니까?')) return
+                      try {
+                        await orderApi.cancelCompleted(selectedOrder.orderId, accessToken)
+                        setSelectedOrderId(null)
+                        setRefreshTick((t) => t + 1)
+                      } catch (error) {
+                        alert(error instanceof OrderApiError ? `${error.code ?? ''} ${error.message}` : '예매 취소 실패')
+                      }
+                    }}
+                  >
+                    예매 취소
+                  </Button>
+                </DialogFooter>
+              )}
             </>
           )}
         </DialogContent>

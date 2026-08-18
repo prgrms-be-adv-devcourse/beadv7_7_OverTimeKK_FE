@@ -49,6 +49,8 @@ interface AppContextValue {
    * 로그인 안 했으면 null. 마운트 시 localStorage에서 복원되기 전엔 authLoading이 true.
    */
   authUser: StoredAuthUser | null
+  /** 인증 필요 API 호출 시 Authorization: Bearer 헤더로 그대로 실어 보낼 값. 비로그인 시 null. */
+  accessToken: string | null
   authLoading: boolean
   loginWithCredentials: (username: string, password: string) => Promise<void>
   signUpIndividual: (input: SignUpIndividualInput) => Promise<void>
@@ -130,7 +132,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     }
     let cancelled = false
     orderApi
-      .getPointBalance(auth.user.userId)
+      .getPointBalance(auth.accessToken)
       .then((res) => {
         if (!cancelled) setPointsBalance(res.balance)
       })
@@ -242,6 +244,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       refresh,
       performancesLoaded,
       authUser: auth?.user ?? null,
+      accessToken: auth?.accessToken ?? null,
       authLoading,
       loginWithCredentials,
       signUpIndividual,

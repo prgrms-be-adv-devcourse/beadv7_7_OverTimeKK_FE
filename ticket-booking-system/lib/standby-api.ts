@@ -63,16 +63,16 @@ export function standbyErrorMessage(error: unknown, fallback: string): string {
 
 async function request<T>(
   path: string,
-  init: RequestInit & { userId?: number } = {},
+  init: RequestInit & { accessToken?: string } = {},
 ): Promise<T | null> {
-  const { userId, headers, ...rest } = init
+  const { accessToken, headers, ...rest } = init
   let res: Response
   try {
     res = await fetch(`${BASE_URL}${path}`, {
       ...rest,
       headers: {
         'Content-Type': 'application/json',
-        ...(userId != null ? { 'X-User-Id': String(userId) } : {}),
+        ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
         ...headers,
       },
     })
@@ -96,7 +96,6 @@ async function request<T>(
 }
 
 export interface CreateStandbyInput {
-  userId: number
   performanceId: number
   sessionNum: number
   zones: Zone[]
@@ -122,33 +121,34 @@ export interface StandbyDetail {
 }
 
 export const standbyApi = {
-  // POST /api/standby
-  async create(input: CreateStandbyInput): Promise<CreateStandbyResult> {
+  // POST /api/standby — 신청자는 accessToken에서 서버가 식별한다
+  async create(input: CreateStandbyInput, accessToken: string): Promise<CreateStandbyResult> {
     const data = await request<CreateStandbyResult>('/api/standby', {
       method: 'POST',
+      accessToken,
       body: JSON.stringify(input),
     })
     if (!data) throw new StandbyApiError('대기 신청 응답이 비어있습니다.', null, 500)
     return data
   },
 
-  // GET /api/standby/{standbyId} (헤더: X-User-Id)
-  async get(standbyId: number, userId: number): Promise<StandbyDetail> {
+  // GET /api/standby/{standbyId} (Authorization: Bearer)
+  async get(standbyId: number, accessToken: string): Promise<StandbyDetail> {
     const data = await request<StandbyDetail>(`/api/standby/${standbyId}`, {
       method: 'GET',
-      userId,
+      accessToken,
     })
     if (!data) throw new StandbyApiError('대기 조회 응답이 비어있습니다.', null, 500)
     return data
   },
 
-  // DELETE /api/standby/{standbyId} (헤더: X-User-Id)
-  async cancel(standbyId: number, userId: number): Promise<void> {
-    await request<void>(`/api/standby/${standbyId}`, { method: 'DELETE', userId })
+  // DELETE /api/standby/{standbyId} (Authorization: Bearer)
+  async cancel(standbyId: number, accessToken: string): Promise<void> {
+    await request<void>(`/api/standby/${standbyId}`, { method: 'DELETE', accessToken })
   },
 
-  // DELETE /api/standby/{standbyId}/zones/{zone} (헤더: X-User-Id)
-  async cancelZone(standbyId: number, zone: Zone, userId: number): Promise<void> {
-    await request<void>(`/api/standby/${standbyId}/zones/${zone}`, { method: 'DELETE', userId })
+  // DELETE /api/standby/{standbyId}/zones/{zone} (Authorization: Bearer)
+  async cancelZone(standbyId: number, zone: Zone, accessToken: string): Promise<void> {
+    await request<void>(`/api/standby/${standbyId}/zones/${zone}`, { method: 'DELETE', accessToken })
   },
 }

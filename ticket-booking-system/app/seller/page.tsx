@@ -60,6 +60,7 @@ export default function SellerPage() {
     sellerCancelPerformance,
     deletePerformance,
     authUser,
+    accessToken,
     authLoading,
   } = useApp()
   void version
@@ -216,7 +217,7 @@ export default function SellerPage() {
 
   // 실제 performance-service(v2 등록 API)로 공연을 등록한다.
   async function handleCreatePerformance() {
-    if (!authUser) {
+    if (!authUser || !accessToken) {
       alert('로그인이 필요합니다.')
       return
     }
@@ -262,7 +263,7 @@ export default function SellerPage() {
           })),
           seatPrices: prices.map((p) => ({ zone: p.zone, price: p.price })),
         },
-        authUser.userId,
+        accessToken,
       )
 
       // 등록 응답엔 performanceId가 안 내려오므로, title로 목록을 다시 조회해서 찾는다.
@@ -304,14 +305,14 @@ export default function SellerPage() {
   }
 
   async function handleDeletePerformance(performance: (typeof performances)[number]) {
-    if (!authUser) {
+    if (!authUser || !accessToken) {
       alert('로그인이 필요합니다.')
       return
     }
     if (!confirm(`"${performance.title}"을(를) 삭제하시겠습니까?`)) return
     setActionPendingId(performance.id)
     try {
-      await performanceApi.delete(Number(performance.id), authUser.userId)
+      await performanceApi.delete(Number(performance.id), accessToken)
       deletePerformance(performance.id)
     } catch (e) {
       const message = e instanceof PerformanceApiError ? e.message : '공연 삭제에 실패했습니다.'

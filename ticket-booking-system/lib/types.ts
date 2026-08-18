@@ -135,25 +135,6 @@ export interface Payment {
   approvedAt: string
 }
 
-export type SettlementStatus = 'SCHEDULED' | 'COMPLETED'
-
-export interface Settlement {
-  id: string
-  sellerId: string
-  performanceId: string
-  /** 정산 대상 월 yyyy-MM */
-  period: string
-  /** 총 판매액 */
-  grossAmount: number
-  /** 플랫폼 수수료 */
-  platformFee: number
-  /** 실 정산액 */
-  netAmount: number
-  status: SettlementStatus
-  /** 정산 예정일/완료일 yyyy-MM-dd (매월 15일) */
-  settledAt: string
-}
-
 export type PointType = 'EARN' | 'USE'
 
 export interface PointTransaction {
@@ -165,7 +146,5 @@ export interface PointTransaction {
   createdAt: string
 }
 
-/** 플랫폼 수수료율 (정산 시 차감) */
-export const PLATFORM_FEE_RATE = 0.05
 /** 공연 종료 다음 날 구매자에게 지급되는 포인트 적립률 */
 export const POINT_EARN_RATE = 0.01

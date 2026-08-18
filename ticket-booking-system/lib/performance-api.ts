@@ -98,8 +98,15 @@ export class PerformanceApiError extends Error {
   }
 }
 
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(`${BASE_URL}${path}`, init)
+async function request<T>(path: string, init?: RequestInit & { accessToken?: string }): Promise<T> {
+  const { accessToken, headers, ...rest } = init ?? {}
+  const res = await fetch(`${BASE_URL}${path}`, {
+    ...rest,
+    headers: {
+      ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
+      ...headers,
+    },
+  })
   // DELETE /api/performances/{id}는 ApiResponse 봉투 없이 204 No Content로 응답한다.
   if (res.status === 204) return null as T
   const body = (await res.json()) as ApiResponse<T>
@@ -193,13 +200,14 @@ export const performanceApi = {
    * 여기서 받은 price/holdExpiredAt/holdKey를 그대로 주문 생성에 넘긴다.
    * 좌석을 5분간 hold하므로, 호출 후 사용자가 이탈하면 releaseTicket()으로 명시적으로
    * 풀어줘야 한다(이후 네트워크 등 추가적인상황으로 오류 발생을 대비해 서버 스케줄러가 자동 해제).
-   * (booking-dialog.tsx는 "좌석 선택 완료" 클릭 시)
+   * (booking-dialog.tsx는 "좌석 선택 완료" 클릭 시). 신원은 accessToken에서 서버가 식별한다.
    */
-  holdTicket(ticketId: number, userId: number, orderType: 'GENERAL' | 'STANDBY' = 'GENERAL'): Promise<TicketHoldResult> {
+  holdTicket(ticketId: number, accessToken: string, orderType: 'GENERAL' | 'STANDBY' = 'GENERAL'): Promise<TicketHoldResult> {
     return request<TicketHoldResult>('/api/tickets/status/hold', {
       method: 'PUT',
+      accessToken,
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ticketId, userId, orderType }),
+      body: JSON.stringify({ ticketId, orderType }),
     })
   },
 
@@ -219,12 +227,12 @@ export const performanceApi = {
    * POST /api/v2/performances — 공연+회차+좌석가격 등록(티켓 발행까지 한 번에).
    * 응답에 생성된 performanceId가 안 내려오므로, 호출 뒤 title로 목록을 다시 조회해서 찾아야 한다.
    */
-  register(input: RegisterPerformanceInput, sellerId: number): Promise<void> {
+  register(input: RegisterPerformanceInput, accessToken: string): Promise<void> {
     return request<null>('/api/v2/performances', {
       method: 'POST',
+      accessToken,
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        userId: sellerId,
         performanceRequest: {
           title: input.title,
           description: input.description,
@@ -241,20 +249,21 @@ export const performanceApi = {
     }).then(() => undefined)
   },
 
-  /** PUT /api/performances/{id} — 공연 기본 정보 수정. 판매자 소유 확인용 X-User-Id 헤더 필요 */
-  update(performanceId: number, input: UpdatePerformanceInput, sellerId: number): Promise<void> {
+  /** PUT /api/performances/{id} — 공연 기본 정보 수정. 판매자 소유 확인은 accessToken에서 서버가 식별 */
+  update(performanceId: number, input: UpdatePerformanceInput, accessToken: string): Promise<void> {
     return request<null>(`/api/performances/${performanceId}`, {
       method: 'PUT',
-      headers: { 'Content-Type': 'application/json', 'X-User-Id': String(sellerId) },
+      accessToken,
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(input),
     }).then(() => undefined)
   },
 
-  /** DELETE /api/performances/{id} — 판매자 소유 확인용 X-User-Id 헤더 필요 */
-  delete(performanceId: number, sellerId: number): Promise<void> {
+  /** DELETE /api/performances/{id} — 판매자 소유 확인은 accessToken에서 서버가 식별 */
+  delete(performanceId: number, accessToken: string): Promise<void> {
     return request<null>(`/api/performances/${performanceId}`, {
       method: 'DELETE',
-      headers: { 'X-User-Id': String(sellerId) },
+      accessToken,
     }).then(() => undefined)
   },
 }

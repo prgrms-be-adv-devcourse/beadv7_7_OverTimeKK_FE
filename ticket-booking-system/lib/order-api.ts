@@ -38,10 +38,15 @@ export class OrderApiError extends Error {
   }
 }
 
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
+async function request<T>(path: string, init?: RequestInit & { accessToken?: string }): Promise<T> {
+  const { accessToken, headers, ...rest } = init ?? {}
   const res = await fetch(`${BASE_URL}${path}`, {
-    ...init,
-    headers: { 'Content-Type': 'application/json', ...(init?.headers ?? {}) },
+    ...rest,
+    headers: {
+      'Content-Type': 'application/json',
+      ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
+      ...headers,
+    },
   })
   const body = (await res.json()) as ApiResponse<T>
   if (!res.ok || !body.success) {
@@ -74,8 +79,12 @@ export interface CancelOrderResult {
   orderStatus: string
 }
 
+/** getOrderHistory()가 실제로 내려주는 값(PENDING/PAYMENT_STARTED는 조회 대상에서 제외됨) */
+export type OrderHistoryStatus = 'COMPLETED' | 'CANCELLED' | 'EXPIRED'
+
 export interface OrderHistoryItem {
   orderId: number
+  orderStatus: OrderHistoryStatus
   performanceName: string
   orderedAt: string
   zone: string
@@ -110,54 +119,58 @@ export interface PageResult<T> {
 }
 
 export const orderApi = {
-  /** GET /api/order?userId= — 결제 완료된 주문 내역 */
-  getOrderHistory(userId: number): Promise<OrderHistoryItem[]> {
-    return request<OrderHistoryItem[]>(`/api/order?userId=${userId}`)
+  /** GET /api/order — 완료/취소/만료 주문 내역(orderStatus로 구분). 대상 사용자는 accessToken에서 서버가 식별한다(더 이상 userId 쿼리 없음). */
+  getOrderHistory(accessToken: string): Promise<OrderHistoryItem[]> {
+    return request<OrderHistoryItem[]>('/api/order', { accessToken })
   },
 
-  /** GET /api/points/balance?userId= — 현재 포인트 잔액 */
-  getPointBalance(userId: number): Promise<PointBalance> {
-    return request<PointBalance>(`/api/points/balance?userId=${userId}`)
+  /** GET /api/points/balance — 현재 포인트 잔액 */
+  getPointBalance(accessToken: string): Promise<PointBalance> {
+    return request<PointBalance>('/api/points/balance', { accessToken })
   },
 
-  /** GET /api/points?userId=&page=&size= — 포인트 내역, 항상 최신순(서버가 정렬 후 페이징) */
-  getPointHistory(userId: number, page = 0, size = 10): Promise<PageResult<PointHistoryItem>> {
-    return request<PageResult<PointHistoryItem>>(`/api/points?userId=${userId}&page=${page}&size=${size}`)
+  /** GET /api/points?page=&size= — 포인트 내역, 항상 최신순(서버가 정렬 후 페이징) */
+  getPointHistory(accessToken: string, page = 0, size = 10): Promise<PageResult<PointHistoryItem>> {
+    return request<PageResult<PointHistoryItem>>(`/api/points?page=${page}&size=${size}`, { accessToken })
   },
 
   /**
    * POST /api/order — ticketId는 performanceApi.tickets()로 조회한 실제 좌석의 ticketId.
    * price/expiredAt/holdKey는 반드시 이 호출 직전에 performanceApi.holdTicket()이 돌려준 값을
    * 그대로 넘겨야 한다(서버가 계산한 hold 정보 없이는 CreateOrderRequest 검증에 실패한다 — 클라이언트가
-   * 만료시각을 임의로 조작하지 못하게 하려는 설계).
+   * 만료시각을 임의로 조작하지 못하게 하려는 설계). 구매자 신원은 accessToken에서 서버가 식별한다.
    */
-  createOrder(ticketId: number, userId: number, price: number, expiredAt: string, holdKey: string): Promise<CreateOrderResult> {
+  createOrder(ticketId: number, accessToken: string, price: number, expiredAt: string, holdKey: string): Promise<CreateOrderResult> {
     return request<CreateOrderResult>('/api/order', {
       method: 'POST',
-      body: JSON.stringify({ userId, ticketId, price, expiredAt, holdKey }),
+      accessToken,
+      body: JSON.stringify({ ticketId, price, expiredAt, holdKey }),
     })
   },
 
   /** POST /api/payments/pay — amount는 반드시 주문 생성 시 잡힌 실제 티켓 가격(performanceApi.tickets()의 price)과 일치해야 함 */
-  pay(orderId: number, amount: number, usedPoint = 0): Promise<PayResult> {
+  pay(orderId: number, amount: number, accessToken: string, usedPoint = 0): Promise<PayResult> {
     return request<PayResult>('/api/payments/pay', {
       method: 'POST',
+      accessToken,
       body: JSON.stringify({ orderId, amount, usedPoint }),
     })
   },
 
   /** POST /api/payments/{paymentId}/confirm */
-  confirm(paymentId: number, transactionKey: string): Promise<ConfirmResult> {
+  confirm(paymentId: number, transactionKey: string, accessToken: string): Promise<ConfirmResult> {
     return request<ConfirmResult>(`/api/payments/${paymentId}/confirm`, {
       method: 'POST',
+      accessToken,
       body: JSON.stringify({ transactionKey }),
     })
   },
 
   /** POST /api/order/{orderId}/cancel-pending — 결제 전 주문 취소 */
-  cancelPending(orderId: number): Promise<CancelOrderResult> {
+  cancelPending(orderId: number, accessToken: string): Promise<CancelOrderResult> {
     return request<CancelOrderResult>(`/api/order/${orderId}/cancel-pending`, {
       method: 'POST',
+      accessToken,
     })
   },
 
@@ -165,9 +178,10 @@ export const orderApi = {
    * POST /api/order/{orderId}/cancel-completed — 결제 완료 후 주문 취소(환불 포함)
    * 백엔드가 아직 이 경로에서 좌석 release를 안 하는 버그가 있음(파일 상단 주석 참고).
    */
-  cancelCompleted(orderId: number, reason?: string): Promise<CancelOrderResult> {
+  cancelCompleted(orderId: number, accessToken: string, reason?: string): Promise<CancelOrderResult> {
     return request<CancelOrderResult>(`/api/order/${orderId}/cancel-completed`, {
       method: 'POST',
+      accessToken,
       body: JSON.stringify({ reason }),
     })
   },
