@@ -20,6 +20,14 @@ export const metadata: Metadata = {
   description:
     '인기 공연 예매부터 매진 후 취소표 대기까지. 대기 순번에 따라 우선 예매 기회를 드리는 티켓 예매 서비스.',
   generator: 'v0.app',
+  icons: {
+    icon: [
+      { url: '/icon.svg', type: 'image/svg+xml' },
+      { url: '/icon-light-32x32.png', sizes: '32x32', type: 'image/png', media: '(prefers-color-scheme: light)' },
+      { url: '/icon-dark-32x32.png', sizes: '32x32', type: 'image/png', media: '(prefers-color-scheme: dark)' },
+    ],
+    apple: '/apple-icon.png',
+  },
 }
 
 export const viewport: Viewport = {
