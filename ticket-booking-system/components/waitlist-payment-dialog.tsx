@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { CreditCard, Clock, Coins, Loader2 } from 'lucide-react'
 import { toast } from 'sonner'
 import {
@@ -78,6 +78,7 @@ export function WaitlistPaymentDialog({
     amount: number
   } | null>(null)
   const [pendingPaymentError, setPendingPaymentError] = useState<string | null>(null)
+  const payInFlightRef = useRef(false)
 
   // 절대 만료시각(근사치) 기준으로 1초마다 남은 시간 재계산
   useEffect(() => {
@@ -139,6 +140,11 @@ export function WaitlistPaymentDialog({
       setPendingPaymentError('로그인이 필요합니다.')
       return
     }
+    // StrictMode 이중 실행이나 deps 변경으로 인한 effect 재진입 시, 이전 hold/createOrder/pay 호출이
+    // 아직 끝나지 않았으면 또 실행하지 않는다 — cancelled 플래그는 이후 setState만 막지 이미 나간
+    // fetch 자체를 막지는 못하므로 실제 중복 네트워크 호출을 여기서 원천 차단한다.
+    if (payInFlightRef.current) return
+    payInFlightRef.current = true
     let cancelled = false
     setPendingPaymentError(null)
     ;(async () => {
@@ -172,6 +178,8 @@ export function WaitlistPaymentDialog({
         if (cancelled) return
         const message = e instanceof OrderApiError ? `${e.code ?? ''} ${e.message}`.trim() : '주문 생성에 실패했습니다.'
         setPendingPaymentError(message)
+      } finally {
+        payInFlightRef.current = false
       }
     })()
     return () => {

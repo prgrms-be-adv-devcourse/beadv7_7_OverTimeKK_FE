@@ -1,6 +1,6 @@
 'use client'
 
-import { Suspense, useEffect, useState } from 'react'
+import { Suspense, useEffect, useRef, useState } from 'react'
 import Link from 'next/link'
 import { useSearchParams } from 'next/navigation'
 import { CheckCircle2, Loader2, XCircle } from 'lucide-react'
@@ -13,9 +13,12 @@ import { useApp } from '@/lib/store'
 
 function PaymentSuccessInner() {
   const params = useSearchParams()
-  const { createOrder, accessToken } = useApp()
+  const { createOrder, accessToken, authLoading } = useApp()
   const [state, setState] = useState<'confirming' | 'done' | 'error'>('confirming')
   const [error, setError] = useState<string | null>(null)
+  // confirm()은 결제를 최종 확정하는 호출이라 같은 paymentId에 대해 두 번 나가면 안 된다.
+  // StrictMode의 effect 이중 실행이나 accessToken 변경으로 인한 effect 재실행에도 한 번만 호출되게 막는다.
+  const confirmedPaymentIdRef = useRef<number | null>(null)
 
   useEffect(() => {
     const paymentIdRaw = params.get('paymentId')
@@ -27,11 +30,17 @@ function PaymentSuccessInner() {
       setError('필수 결제 정보가 없습니다.')
       return
     }
+    // authLoading 동안엔 accessToken이 아직 localStorage에서 복원되기 전이라 null이다.
+    // 이 시점에 !accessToken을 바로 판단하면 로그인된 사용자도 "로그인이 필요합니다"
+    // 에러가 잠깐 떴다가 복원 완료 후 재실행되며 결제 완료로 바뀌는 깜빡임이 생긴다.
+    if (authLoading) return
     if (!accessToken) {
       setState('error')
       setError('로그인이 필요합니다.')
       return
     }
+    if (confirmedPaymentIdRef.current === paymentId) return
+    confirmedPaymentIdRef.current = paymentId
 
     orderApi
       .confirm(paymentId, paymentKey, accessToken)
@@ -60,7 +69,7 @@ function PaymentSuccessInner() {
         setError(e instanceof OrderApiError ? `${e.code ?? ''} ${e.message}`.trim() : '결제 승인에 실패했습니다.')
       })
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [params, accessToken])
+  }, [params, accessToken, authLoading])
 
   return (
     <div className="mx-auto flex max-w-md flex-col items-center gap-4 px-4 py-24 text-center">

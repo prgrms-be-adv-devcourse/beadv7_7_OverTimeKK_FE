@@ -38,6 +38,23 @@ export class OrderApiError extends Error {
   }
 }
 
+/**
+ * 같은 논리적 결제 시도(orderId/paymentId)에 대해 재시도(새로고침, 뒤로가기 재진입, effect 재실행 등)가
+ * 일어나도 항상 같은 Idempotency-Key를 보내야 서버가 실제로 중복을 잡아낸다 — 호출마다 새로
+ * crypto.randomUUID()를 생성하면 재시도 케이스에서 매번 다른 키가 나가 서버 dedupe가 무력화된다.
+ * sessionStorage에 캐싱해 같은 탭 내 재시도는 같은 키를 재사용하고, 새 orderId/paymentId(=새 시도)는
+ * 자연히 새 키를 받는다.
+ */
+function getOrCreateIdempotencyKey(scope: 'pay' | 'confirm', id: number): string {
+  if (typeof window === 'undefined') return crypto.randomUUID()
+  const storageKey = `orderApi:idempotency:${scope}:${id}`
+  const existing = sessionStorage.getItem(storageKey)
+  if (existing) return existing
+  const key = crypto.randomUUID()
+  sessionStorage.setItem(storageKey, key)
+  return key
+}
+
 async function request<T>(path: string, init?: RequestInit & { accessToken?: string }): Promise<T> {
   const { accessToken, headers, ...rest } = init ?? {}
   const res = await fetch(`${BASE_URL}${path}`, {
@@ -148,20 +165,26 @@ export const orderApi = {
     })
   },
 
-  /** POST /api/payments/pay — amount는 반드시 주문 생성 시 잡힌 실제 티켓 가격(performanceApi.tickets()의 price)과 일치해야 함 */
+  /**
+   * POST /api/payments/pay — amount는 반드시 주문 생성 시 잡힌 실제 티켓 가격(performanceApi.tickets()의 price)과 일치해야 함.
+   * 멱등성 보장을 위해 orderId 기준으로 고정된 UUID v4를 Idempotency-Key 헤더로 실어 보낸다(서버가 prefix를 붙여
+   * 최대 300자로 저장) — 같은 orderId로 재시도해도 항상 같은 키가 나가야 서버 dedupe가 실제로 동작한다.
+   */
   pay(orderId: number, amount: number, accessToken: string, usedPoint = 0): Promise<PayResult> {
     return request<PayResult>('/api/payments/pay', {
       method: 'POST',
       accessToken,
+      headers: { 'Idempotency-Key': getOrCreateIdempotencyKey('pay', orderId) },
       body: JSON.stringify({ orderId, amount, usedPoint }),
     })
   },
 
-  /** POST /api/payments/{paymentId}/confirm */
+  /** POST /api/payments/{paymentId}/confirm — Idempotency-Key 헤더는 pay()와 동일한 규칙(paymentId 기준 고정 UUID v4) */
   confirm(paymentId: number, transactionKey: string, accessToken: string): Promise<ConfirmResult> {
     return request<ConfirmResult>(`/api/payments/${paymentId}/confirm`, {
       method: 'POST',
       accessToken,
+      headers: { 'Idempotency-Key': getOrCreateIdempotencyKey('confirm', paymentId) },
       body: JSON.stringify({ transactionKey }),
     })
   },

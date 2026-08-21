@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Loader2, Coins } from 'lucide-react'
 import { toast } from 'sonner'
 import {
@@ -85,6 +85,7 @@ export function BookingDialog({
     amount: number
   } | null>(null)
   const [pendingPaymentError, setPendingPaymentError] = useState<string | null>(null)
+  const payInFlightRef = useRef(false)
 
   // performance-service/v2로 등록된 실제 공연은 숫자 ID를 그대로 쓴다(mock은 'p_xxx' 형태)
   const isRealPerformance = /^\d+$/.test(performance.id)
@@ -312,6 +313,11 @@ export function BookingDialog({
       setPendingPaymentError('선택한 좌석 정보를 찾을 수 없습니다. 좌석을 다시 선택해 주세요.')
       return
     }
+    // StrictMode 이중 실행이나 deps 변경으로 인한 effect 재진입 시, 이전 createOrder/pay 호출이
+    // 아직 끝나지 않았으면 또 실행하지 않는다 — cancelled 플래그는 이후 setState만 막지 이미 나간
+    // fetch 자체를 막지는 못하므로 실제 중복 네트워크 호출을 여기서 원천 차단한다.
+    if (payInFlightRef.current) return
+    payInFlightRef.current = true
     let cancelled = false
     setPendingPaymentError(null)
     ;(async () => {
@@ -358,6 +364,8 @@ export function BookingDialog({
         if (cancelled) return
         const message = e instanceof OrderApiError ? `${e.code ?? ''} ${e.message}`.trim() : '주문 생성에 실패했습니다.'
         setPendingPaymentError(message)
+      } finally {
+        payInFlightRef.current = false
       }
     })()
     return () => {
