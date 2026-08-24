@@ -5,9 +5,10 @@ import { Coins, Wallet } from 'lucide-react'
 import { useApp } from '@/lib/store'
 import { api } from '@/lib/api'
 import { formatKRW } from '@/lib/domain'
-import { Button } from '@/components/ui/button'
+import { buttonVariants } from '@/components/ui/button'
 import Link from 'next/link'
 import { LoginRequired } from '@/components/login-required'
+import { cn } from '@/lib/utils'
 
 export default function SellerMyPage() {
   const { role, userId, version, authUser, authLoading } = useApp()
@@ -93,9 +94,9 @@ export default function SellerMyPage() {
       </section>
 
       <div className="text-center">
-        <Button asChild variant="outline">
-          <Link href="/">공연 둘러보기</Link>
-        </Button>
+        <Link href="/" className={cn(buttonVariants({ variant: 'outline' }))}>
+          공연 둘러보기
+        </Link>
       </div>
     </div>
   )
