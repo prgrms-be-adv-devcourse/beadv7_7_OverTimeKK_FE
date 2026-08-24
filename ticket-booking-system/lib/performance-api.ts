@@ -114,6 +114,9 @@ async function request<T>(path: string, init?: RequestInit & { accessToken?: str
   if (res.status === 204) return null as T
   const body = (await res.json()) as ApiResponse<T>
   if (!res.ok || !body.success) {
+    if (res.status === 401) {
+      throw new PerformanceApiError('로그인 정보를 확인하세요.', body.code, res.status)
+    }
     throw new PerformanceApiError(body.message ?? '요청이 실패했습니다.', body.code, res.status)
   }
   return body.data as T

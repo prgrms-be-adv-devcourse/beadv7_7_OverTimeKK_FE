@@ -111,6 +111,7 @@ export function PerformanceDetailClient({ id }: { id: string }) {
                 src={displayPerformance.posterUrl || '/placeholder.svg'}
                 alt={`${displayPerformance.title} 포스터`}
                 fill
+                priority
                 sizes="224px"
                 className="object-cover"
               />

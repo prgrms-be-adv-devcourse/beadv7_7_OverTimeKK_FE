@@ -33,6 +33,9 @@ async function request<T>(path: string): Promise<T> {
   const res = await fetch(`${BASE_URL}${path}`)
   const body = (await res.json()) as ApiResponse<T>
   if (!res.ok || !body.success) {
+    if (res.status === 401) {
+      throw new VenueApiError('로그인 정보를 확인하세요.', body.code, res.status)
+    }
     throw new VenueApiError(body.message ?? '요청이 실패했습니다.', body.code, res.status)
   }
   return body.data as T

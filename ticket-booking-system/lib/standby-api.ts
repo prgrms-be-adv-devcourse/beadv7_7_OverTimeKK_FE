@@ -90,6 +90,9 @@ async function request<T>(
   }
 
   if (!res.ok || !body || !body.success) {
+    if (res.status === 401) {
+      throw new StandbyApiError('로그인 정보를 확인하세요.', body?.code ?? null, res.status)
+    }
     throw new StandbyApiError(body?.message ?? '요청에 실패했습니다.', body?.code ?? null, res.status)
   }
   return body.data
