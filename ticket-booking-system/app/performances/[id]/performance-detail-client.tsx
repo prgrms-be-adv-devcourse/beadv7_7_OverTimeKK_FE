@@ -11,7 +11,7 @@ import { useApp } from '@/lib/store'
 import { api } from '@/lib/api'
 import { venueApi } from '@/lib/venue-api'
 import { performanceApi, type RealPerformance } from '@/lib/performance-api'
-import { formatDate, formatDateTime } from '@/lib/domain'
+import { effectivePerformanceStatus, formatDate, formatDateTime } from '@/lib/domain'
 
 export function PerformanceDetailClient({ id }: { id: string }) {
   const { version, performancesLoaded } = useApp()
@@ -120,7 +120,7 @@ export function PerformanceDetailClient({ id }: { id: string }) {
                 <span className="text-sm font-medium text-muted-foreground">
                   {displayPerformance.category}
                 </span>
-                <PerformanceStatusBadge status={displayPerformance.status} />
+                <PerformanceStatusBadge status={effectivePerformanceStatus(displayPerformance)} />
               </div>
               <h1 className="text-2xl font-bold leading-tight text-balance md:text-3xl">
                 {displayPerformance.title}

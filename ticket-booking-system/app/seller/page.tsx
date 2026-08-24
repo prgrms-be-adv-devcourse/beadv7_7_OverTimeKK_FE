@@ -5,7 +5,7 @@ import Link from 'next/link'
 import { Plus, Trash2, DollarSign, Users, Minus } from 'lucide-react'
 import { useApp } from '@/lib/store'
 import { api } from '@/lib/api'
-import { formatKRW } from '@/lib/domain'
+import { effectivePerformanceStatus, formatKRW } from '@/lib/domain'
 import { performanceApi, PerformanceApiError, imagesApi } from '@/lib/performance-api'
 import { registerPerformanceExtras } from '@/lib/performance-extras'
 import { venueApi, type VenueSummary, type HallSummary, type HallDirectoryEntry } from '@/lib/venue-api'
@@ -565,7 +565,7 @@ export default function SellerPage() {
                   </p>
                   <p className="mt-1 text-sm text-muted-foreground">{performance.category}</p>
                 </div>
-                <PerformanceStatusBadge status={performance.status} />
+                <PerformanceStatusBadge status={effectivePerformanceStatus(performance)} />
               </div>
               <div className="mt-4 space-y-2 text-sm text-muted-foreground">
                 <div className="flex items-center gap-2">

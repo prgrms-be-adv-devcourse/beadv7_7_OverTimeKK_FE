@@ -10,7 +10,7 @@ import { WaitlistDialog } from '@/components/waitlist-dialog'
 import { api } from '@/lib/api'
 import { performanceApi, type RealPerformanceSessionSeats } from '@/lib/performance-api'
 import { useApp } from '@/lib/store'
-import { formatKRW, formatDay, formatTime, parseDateTime, NOW } from '@/lib/domain'
+import { effectivePerformanceStatus, formatKRW, formatDay, formatTime, parseDateTime, NOW } from '@/lib/domain'
 import { cn } from '@/lib/utils'
 import type { Performance, PerformanceSession, Zone } from '@/lib/types'
 
@@ -89,8 +89,9 @@ export function BookingPanel({ performance }: { performance: Performance }) {
   const ticketOpenAt = isRealPerformance && realSessionSeats ? realSessionSeats.ticketOpenAt : performance.ticketOpenAt
   const opened = parseDateTime(ticketOpenAt).getTime() <= NOW.getTime()
   const openAt = parseDateTime(ticketOpenAt).getTime()
-  const cancelled = performance.status === 'CANCELLED'
-  const ended = performance.status === 'ENDED'
+  const status = effectivePerformanceStatus(performance)
+  const cancelled = status === 'CANCELLED'
+  const ended = status === 'ENDED'
 
   const zoneRows = isRealPerformance
     ? (selectedSession && realSessionSeats

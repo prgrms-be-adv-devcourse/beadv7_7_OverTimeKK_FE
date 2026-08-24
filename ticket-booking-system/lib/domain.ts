@@ -1,4 +1,4 @@
-import type { Performance, Zone } from './types'
+import type { Performance, PerformanceStatus, Zone } from './types'
 
 /** 서비스 기준 "현재 시각". */
 export const NOW = new Date()
@@ -54,6 +54,20 @@ export function formatTime(value: string): string {
     minute: '2-digit',
     hour12: false,
   })
+}
+
+/**
+ * 실 공연은 병합 시 status가 'ON_SALE'로 고정되고(취소 시에만 'CANCELLED'로 바뀜) 이후
+ * 갱신되지 않아, 티켓 오픈 전/공연 기간 종료 후에도 계속 "예매중"으로 보인다 — 화면 표시용
+ * 상태는 날짜 기준으로 다시 계산한다. 판매자가 명시적으로 취소한 상태(CANCELLED)는 그대로 우선한다.
+ */
+export function effectivePerformanceStatus(performance: Performance): PerformanceStatus {
+  if (performance.status === 'CANCELLED') return 'CANCELLED'
+  if (NOW.getTime() < parseDateTime(performance.ticketOpenAt).getTime()) return 'DRAFT'
+  const endOfSaleDay = parseDateTime(performance.endDate)
+  endOfSaleDay.setHours(23, 59, 59, 999)
+  if (NOW.getTime() > endOfSaleDay.getTime()) return 'ENDED'
+  return performance.status
 }
 
 export const ZONE_META: Record<Zone, { label: string; badgeClass: string }> = {
