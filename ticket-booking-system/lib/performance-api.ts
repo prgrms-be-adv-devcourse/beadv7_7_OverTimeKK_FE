@@ -14,7 +14,7 @@
  * /api/performances/detail 계열을 쓴다(요청 필드가 더 적어서 그대로 유지).
  */
 
-export const BASE_URL = process.env.NEXT_PUBLIC_PERFORMANCE_API_BASE_URL ?? 'http://localhost:8083'
+export const BASE_URL = process.env.NEXT_PUBLIC_PERFORMANCE_API_BASE_URL ?? 'http://localhost:8080'
 
 export interface RealPerformance {
   performanceId: number

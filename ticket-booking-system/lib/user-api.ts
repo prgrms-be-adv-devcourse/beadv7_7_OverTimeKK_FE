@@ -15,7 +15,7 @@
  * 프론트는 절대 호출하면 안 되고, 반드시 GET /api/users/me(Authorization 헤더 기반)만 쓴다.
  */
 
-const BASE_URL = process.env.NEXT_PUBLIC_USER_API_BASE_URL ?? 'http://localhost:8081'
+const BASE_URL = process.env.NEXT_PUBLIC_USER_API_BASE_URL ?? 'http://localhost:8080'
 
 export type UserType = 'INDIVIDUAL' | 'BUSINESS'
 export type UserStatus = 'ACTIVE' | 'DORMANT' | 'WITHDRAWN'

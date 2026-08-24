@@ -19,7 +19,7 @@
  *   버그가 있다(2026-07-28 직접 검증).
  */
 
-const BASE_URL = process.env.NEXT_PUBLIC_ORDER_API_BASE_URL ?? 'http://localhost:8082'
+const BASE_URL = process.env.NEXT_PUBLIC_ORDER_API_BASE_URL ?? 'http://localhost:8080'
 
 interface ApiResponse<T> {
   success: boolean

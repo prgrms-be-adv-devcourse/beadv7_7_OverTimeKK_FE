@@ -10,7 +10,7 @@
 
 import type { Zone } from './types'
 
-const BASE_URL = process.env.NEXT_PUBLIC_STANDBY_API_BASE_URL ?? 'http://localhost:8083'
+const BASE_URL = process.env.NEXT_PUBLIC_STANDBY_API_BASE_URL ?? 'http://localhost:8080'
 
 /** 결제 제한 시간(초). 백엔드가 만료시각을 내려주지 않아(문서 2번 항목 참고) 프론트에서 근사 계산용으로만 사용. */
 export const STANDBY_OFFER_TTL_SECONDS = 1800
