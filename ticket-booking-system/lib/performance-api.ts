@@ -52,14 +52,17 @@ export interface RealTicketZone {
   sessionZones: RealTicket[]
 }
 
-/** GET /api/performances/{id}/sessions/seats 응답의 sessions 배열 원소 — 회차 x 구역 한 줄 */
+/**
+ * GET /api/performances/{id}/sessions/seats 응답의 sessions 배열 원소 — 회차 x 구역 한 줄.
+ * performanceStartAt가 이미 지난 회차는 zone/price/availableSeatCount가 전부 null로 내려온다.
+ */
 export interface RealSessionSeat {
   sessionNum: number
   performanceStartAt: string
   actor: string
-  zone: string
-  price: number
-  availableSeatCount: number
+  zone: string | null
+  price: number | null
+  availableSeatCount: number | null
 }
 
 /** GET /api/performances/{id}/sessions/seats 응답 — 전체 회차 x 구역의 가격/잔여석을 한 번에 내려준다 */

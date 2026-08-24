@@ -94,10 +94,14 @@ export function BookingPanel({ performance }: { performance: Performance }) {
 
   const zoneRows = isRealPerformance
     ? (selectedSession && realSessionSeats
-        ? realSessionSeats.sessions.filter((s) => s.sessionNum === selectedSession.sessionNum)
+        ? realSessionSeats.sessions.filter(
+            // 공연 시작 시각이 지난 회차는 zone/price/availableSeatCount가 null로 내려온다 —
+            // 지난 회차를 선택했을 때 좌석 등급 목록을 비워서 formatKRW(null) 등의 렌더링 오류를 막는다.
+            (s) => s.sessionNum === selectedSession.sessionNum && s.zone != null,
+          )
         : []
       )
-        .map((s) => ({ zone: s.zone as Zone, price: s.price, remaining: s.availableSeatCount, total: s.availableSeatCount }))
+        .map((s) => ({ zone: s.zone as Zone, price: s.price as number, remaining: s.availableSeatCount as number, total: s.availableSeatCount as number }))
         .sort((a, b) => b.price - a.price)
     : prices
         .slice()
