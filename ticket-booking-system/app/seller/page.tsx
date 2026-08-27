@@ -102,7 +102,6 @@ export default function SellerPage() {
     hallId: number | null
     posterUrl: string
     posterObjectKey: string
-    category: string
   }>({
     title: '',
     description: '',
@@ -114,7 +113,6 @@ export default function SellerPage() {
     hallId: null,
     posterUrl: '',
     posterObjectKey: '',
-    category: '',
   })
 
   // venue 선택이 바뀌면 그 venue의 hall 목록을 새로 불러오고, 이전에 고른 hall 선택은 초기화한다.
@@ -273,7 +271,6 @@ export default function SellerPage() {
         const realSessions = await performanceApi.sessions(created.performanceId).catch(() => [])
         registerPerformanceExtras(form.title, {
           posterUrl: form.posterUrl,
-          category: form.category,
           zonePrices: Object.fromEntries(prices.map((p) => [p.zone, p.price])),
         })
         api.importRealPerformances([{ real: created, sessions: realSessions }])
@@ -292,7 +289,6 @@ export default function SellerPage() {
         hallId: null,
         posterUrl: '',
         posterObjectKey: '',
-        category: '',
       })
       setSessions([{ sessionNum: '1', actor: '', performanceStartAt: `${dateOnly(1)} 19:00:00` }])
       setPriceRows([{ id: 1, zone: 'VIP', price: '' }])
@@ -360,8 +356,6 @@ export default function SellerPage() {
             </div>
             <div className="grid gap-3 md:grid-cols-2">
               <Input placeholder="공연 제목" value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} />
-              <Input placeholder="카테고리" value={form.category} onChange={(e) => setForm({ ...form, category: e.target.value })} />
-              <Input placeholder="러닝타임(분, 숫자만 입력)" type="number" value={form.runtime} onChange={(e) => setForm({ ...form, runtime: e.target.value })} />
               <Select
                 value={form.venueId != null ? String(form.venueId) : ''}
                 onValueChange={(value) =>
@@ -379,6 +373,7 @@ export default function SellerPage() {
                   ))}
                 </SelectContent>
               </Select>
+              <Input placeholder="러닝타임(분, 숫자만 입력)" type="number" value={form.runtime} onChange={(e) => setForm({ ...form, runtime: e.target.value })} />
               <Select
                 value={form.hallId != null ? String(form.hallId) : ''}
                 onValueChange={(value) => value && setForm({ ...form, hallId: Number(value) })}
@@ -435,7 +430,15 @@ export default function SellerPage() {
               )}
               {posterUploadError ? <p className="text-sm text-destructive">{posterUploadError}</p> : null}
             </div>
-            <Textarea placeholder="공연 설명" value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} />
+            <div className="space-y-1">
+              <Textarea
+                placeholder="공연 설명"
+                maxLength={255}
+                value={form.description}
+                onChange={(e) => setForm({ ...form, description: e.target.value })}
+              />
+              <p className="text-right text-xs text-muted-foreground">{form.description.length}/255</p>
+            </div>
           </div>
 
           <div className="space-y-3">
@@ -563,7 +566,6 @@ export default function SellerPage() {
                   <p className="mt-1 text-sm text-muted-foreground">
                     {hallDirectory?.get(Number(performance.hallId))?.hallName ?? '공연장 정보 없음'}
                   </p>
-                  <p className="mt-1 text-sm text-muted-foreground">{performance.category}</p>
                 </div>
                 <PerformanceStatusBadge status={effectivePerformanceStatus(performance)} />
               </div>

@@ -48,7 +48,7 @@ export function PerformanceDetailClient({ id }: { id: string }) {
     }
   }, [id, isRealPerformance])
 
-  // 실 공연이고 상세 조회가 끝났으면 그 값으로 화면 표기를 덮어쓴다. status/category/sellerId는
+  // 실 공연이고 상세 조회가 끝났으면 그 값으로 화면 표기를 덮어쓴다. status/sellerId는
   // 이 API에 없는 필드라 mock(merge) 값을 그대로 유지한다.
   const displayPerformance = useMemo(() => {
     if (!performance || !isRealPerformance || !realDetail) return performance
@@ -118,9 +118,6 @@ export function PerformanceDetailClient({ id }: { id: string }) {
             </div>
             <div className="space-y-3">
               <div className="flex items-center gap-2">
-                <span className="text-sm font-medium text-muted-foreground">
-                  {displayPerformance.category}
-                </span>
                 <PerformanceStatusBadge status={effectivePerformanceStatus(displayPerformance)} />
               </div>
               <h1 className="text-2xl font-bold leading-tight text-balance md:text-3xl">

@@ -139,7 +139,6 @@ export const api = {
         // lib/venue-api.ts(venueApi.hallDirectory(), performanceApi.selectSeatZone())로 조회.
         hallId: String(real.hallId),
         posterUrl: extras.posterUrl,
-        category: extras.category,
         status: 'ON_SALE',
       })
 

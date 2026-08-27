@@ -1,7 +1,7 @@
 /**
  * 실제 API로 받아온 공연(RealPerformance)에 덧붙이는 프론트 전용 정적 정보.
  * ------------------------------------------------------------------
- * 백엔드엔 포스터/카테고리 필드가 없고, 좌석 등급별 가격·잔여석 조회 API도 없다
+ * 백엔드엔 포스터 필드가 없고, 좌석 등급별 가격·잔여석 조회 API도 없다
  * (performance-service는 등록 시에만 좌석가격을 받고, 다시 읽어오는 API가 없음).
  * 그래서 이 정보들은 프론트에서 "정적 데이터"로 관리하기로 결정했다.
  *
@@ -14,14 +14,12 @@ import type { Zone } from './types'
 
 export interface PerformanceExtras {
   posterUrl: string
-  category: string
   /** 구역별 가격. 여기 없는 구역은 해당 공연에서 판매하지 않는 것으로 취급 */
   zonePrices: Partial<Record<Zone, number>>
 }
 
 const DEFAULT_EXTRAS: PerformanceExtras = {
   posterUrl: '',
-  category: '기타',
   zonePrices: { VIP: 120000, R: 90000, S: 60000, A: 40000 },
 }
 
@@ -32,7 +30,6 @@ const DEFAULT_EXTRAS: PerformanceExtras = {
 const EXTRAS_BY_TITLE: Record<string, PerformanceExtras> = {
   '최종 검증 공연': {
     posterUrl: '',
-    category: '기타',
     zonePrices: { VIP: 100000, R: 80000 },
   },
 }
@@ -40,7 +37,7 @@ const EXTRAS_BY_TITLE: Record<string, PerformanceExtras> = {
 const RUNTIME_EXTRAS_STORAGE_KEY = 'reseat:performance-extras'
 
 // 페이지를 새로고침하면 JS 모듈이 다시 초기화돼서 EXTRAS_BY_TITLE에 런타임에 추가한 값이
-// 사라진다. 셀러가 등록한 공연의 가격/카테고리가 새로고침마다 기본값으로 돌아가지 않도록
+// 사라진다. 셀러가 등록한 공연의 가격이 새로고침마다 기본값으로 돌아가지 않도록
 // localStorage에도 같이 저장해두고, 모듈 로드 시 복원한다.
 function loadRuntimeExtras(): void {
   if (typeof window === 'undefined') return

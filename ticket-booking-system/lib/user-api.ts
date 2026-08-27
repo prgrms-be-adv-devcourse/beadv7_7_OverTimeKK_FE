@@ -33,6 +33,19 @@ export interface LoginResponse {
   refreshToken: string
 }
 
+export type QueueStatus = 'READY' | 'WAITING' | 'EXPIRED'
+
+export interface QueueEnterResponse {
+  status: QueueStatus
+  token: string
+  position: number | null
+}
+
+export interface QueueStatusResponse {
+  status: QueueStatus
+  position: number | null
+}
+
 interface ApiResponse<T> {
   success: boolean
   data: T | null
@@ -155,14 +168,53 @@ export const userApi = {
     return data
   },
 
-  // POST /api/users/login
-  async login(username: string, password: string): Promise<LoginResponse> {
+  // POST /api/users/login/queue/enter — DB 커넥션 풀 보호용 로그인 대기열 입장. 바로 로그인 가능하면 READY.
+  async enterLoginQueue(): Promise<QueueEnterResponse> {
+    const data = await request<QueueEnterResponse>('/api/users/login/queue/enter', { method: 'POST' })
+    if (!data) throw new UserApiError('대기열 입장 응답이 비어있습니다.', null, 500)
+    return data
+  },
+
+  // GET /api/users/login/queue/status?token= — 대기열 순번/승격 여부 폴링
+  async loginQueueStatus(token: string): Promise<QueueStatusResponse> {
+    const data = await request<QueueStatusResponse>(
+      `/api/users/login/queue/status?token=${encodeURIComponent(token)}`,
+      { method: 'GET' },
+    )
+    if (!data) throw new UserApiError('대기열 상태 응답이 비어있습니다.', null, 500)
+    return data
+  },
+
+  // POST /api/users/login — X-Admission-Token 헤더 필수(대기열 통과 토큰). 1회용이라 성공/실패 무관 서버가 자동 반납.
+  async login(username: string, password: string, admissionToken: string): Promise<LoginResponse> {
     const data = await request<LoginResponse>('/api/users/login', {
       method: 'POST',
+      headers: { 'X-Admission-Token': admissionToken },
       body: JSON.stringify({ username, password }),
     })
     if (!data) throw new UserApiError('로그인 응답이 비어있습니다.', null, 500)
     return data
+  },
+
+  // 대기열 입장 → (필요 시) 폴링 → 로그인까지 한 번에 처리. EXPIRED면 대기열 재입장부터 자동 재시도.
+  async loginWithQueue(username: string, password: string): Promise<LoginResponse> {
+    const MAX_QUEUE_RESTARTS = 5
+    const QUEUE_POLL_INTERVAL_MS = 500
+
+    for (let attempt = 0; attempt < MAX_QUEUE_RESTARTS; attempt++) {
+      let queue = await this.enterLoginQueue()
+
+      while (queue.status === 'WAITING') {
+        await new Promise((resolve) => setTimeout(resolve, QUEUE_POLL_INTERVAL_MS))
+        const status = await this.loginQueueStatus(queue.token)
+        queue = { ...queue, status: status.status, position: status.position }
+      }
+
+      if (queue.status === 'EXPIRED') continue
+      return this.login(username, password, queue.token)
+    }
+
+    throw new UserApiError('로그인 대기열이 계속 만료되었습니다. 잠시 후 다시 시도해 주세요.', null, 408)
   },
 
   // POST /api/users/token/refresh

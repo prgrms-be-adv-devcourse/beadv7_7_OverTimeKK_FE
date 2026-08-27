@@ -13,7 +13,7 @@ import { toast } from 'sonner'
 import { api } from './api'
 import { performanceApi } from './performance-api'
 import { orderApi } from './order-api'
-import { userApi, type SignUpBusinessInput, type SignUpIndividualInput } from './user-api'
+import { userApi, UserApiError, type SignUpBusinessInput, type SignUpIndividualInput } from './user-api'
 import { readAuth, writeAuth, clearAuth, type StoredAuth, type StoredAuthUser } from './auth-store'
 import type { UserRole, Zone } from './types'
 
@@ -94,12 +94,51 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const holdSeat = useCallback((seat: HeldSeat) => setHeldSeat(seat), [])
   const releaseSeat = useCallback(() => setHeldSeat(null), [])
 
-  // 마운트 시 localStorage에 저장된 로그인 상태를 복원한다. 백엔드에 다시 검증하지는
-  // 않음(액세스 토큰 만료/자동 갱신은 범위 밖) — 로그인 필요한 호출이 401을 받으면
-  // 그 화면에서 개별적으로 처리한다.
+  // 마운트 시 localStorage에 저장된 로그인 상태를 서버에 재검증한다. 토큰 만료 여부를
+  // 로컬에서 판단할 방법이 없어서(만료 시각을 저장해두지 않음) getMe()로 실제로 찔러본다.
+  // 401(만료/무효)이면 refresh 시도 → 그마저 실패하면 로그아웃 처리. 네트워크 에러 등
+  // getMe 자체가 서버에 도달 못 한 경우는 토큰 유효성과 무관하므로 로그아웃시키지 않고
+  // 저장된 값을 그대로 믿는다 — 백엔드 미기동 시에도 mock만으로 앱이 동작해야 하는
+  // 기존 컨벤션(lib/store.tsx의 pointsBalance 조회 등)과 맞춤.
   useEffect(() => {
-    setAuth(readAuth())
-    setAuthLoading(false)
+    const stored = readAuth()
+    if (!stored) {
+      setAuthLoading(false)
+      return
+    }
+    let cancelled = false
+    ;(async () => {
+      try {
+        await userApi.getMe(stored.accessToken)
+        if (!cancelled) setAuth(stored)
+      } catch (error) {
+        if (!(error instanceof UserApiError) || error.status !== 401) {
+          if (!cancelled) setAuth(stored)
+          return
+        }
+        try {
+          const tokens = await userApi.refresh(stored.refreshToken)
+          const me = await userApi.getMe(tokens.accessToken)
+          const nextAuth: StoredAuth = {
+            accessToken: tokens.accessToken,
+            refreshToken: tokens.refreshToken,
+            user: { userId: me.userId, username: me.username, userType: me.userType },
+          }
+          if (!cancelled) {
+            writeAuth(nextAuth)
+            setAuth(nextAuth)
+          }
+        } catch {
+          clearAuth()
+          if (!cancelled) setAuth(null)
+        }
+      } finally {
+        if (!cancelled) setAuthLoading(false)
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
   }, [])
 
   // 개인(INDIVIDUAL) 회원은 판매자 화면으로 전환할 수 없다. 로그인 중 SELLER로 바뀌는
@@ -154,7 +193,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   )
 
   const loginWithCredentials = useCallback(async (username: string, password: string) => {
-    const tokens = await userApi.login(username, password)
+    const tokens = await userApi.loginWithQueue(username, password)
     const me = await userApi.getMe(tokens.accessToken)
     const nextAuth: StoredAuth = {
       accessToken: tokens.accessToken,

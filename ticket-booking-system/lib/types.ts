@@ -60,7 +60,6 @@ export interface Performance {
   ticketOpenAt: string
   hallId: string
   posterUrl: string
-  category: string
   status: PerformanceStatus
 }
 
