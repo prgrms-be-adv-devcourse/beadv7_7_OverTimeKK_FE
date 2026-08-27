@@ -25,7 +25,7 @@ import { LoginRequired } from '@/components/login-required'
 import type { Zone } from '@/lib/types'
 
 export default function WaitlistPage() {
-  const { userId, role, authUser, accessToken, authLoading } = useApp()
+  const { userId, authUser, accessToken, authLoading } = useApp()
   const { entries, refresh } = useMyStandby(userId ?? '', accessToken ?? '')
   const [selectedStandbyId, setSelectedStandbyId] = useState<number | null>(null)
   const [payingStandbyId, setPayingStandbyId] = useState<number | null>(null)
@@ -74,13 +74,6 @@ export default function WaitlistPage() {
 
   if (authLoading) return null
   if (!authUser) return <LoginRequired message="대기 신청 내역은 로그인 후 이용할 수 있습니다." />
-  if (role !== 'BUYER') {
-    return (
-      <div className="mx-auto max-w-5xl px-4 py-10">
-        <p className="text-muted-foreground">구매자 전환 후 이용할 수 있습니다.</p>
-      </div>
-    )
-  }
 
   return (
     <div className="mx-auto max-w-5xl px-4 py-10 space-y-6">

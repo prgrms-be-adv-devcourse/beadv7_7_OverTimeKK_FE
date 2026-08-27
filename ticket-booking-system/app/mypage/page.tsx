@@ -39,7 +39,7 @@ const ORDER_STATUS_META: Record<OrderHistoryStatus, { label: string; className: 
 }
 
 export default function MyPage() {
-  const { role, points, authUser, accessToken, authLoading } = useApp()
+  const { points, authUser, accessToken, authLoading } = useApp()
   const [selectedPointId, setSelectedPointId] = useState<number | null>(null)
   const [selectedOrderId, setSelectedOrderId] = useState<number | null>(null)
 
@@ -128,13 +128,6 @@ export default function MyPage() {
 
   if (authLoading) return null
   if (!authUser || !accessToken) return <LoginRequired message="마이페이지는 로그인 후 이용할 수 있습니다." />
-  if (role !== 'BUYER') {
-    return (
-      <div className="mx-auto max-w-5xl px-4 py-10">
-        <p className="text-muted-foreground">구매자 전환 후 이용할 수 있습니다.</p>
-      </div>
-    )
-  }
 
   return (
     <div className="mx-auto max-w-5xl px-4 py-10 space-y-6">

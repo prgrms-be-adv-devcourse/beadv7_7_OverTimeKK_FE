@@ -53,7 +53,6 @@ function inputValueToDateTime(value: string): string {
 
 export default function SellerPage() {
   const {
-    role,
     userId,
     version,
     refresh,
@@ -320,10 +319,10 @@ export default function SellerPage() {
 
   if (authLoading) return null
   if (!authUser) return <LoginRequired message="공연 관리는 로그인 후 이용할 수 있습니다." />
-  if (role !== 'SELLER') {
+  if (authUser.userType !== 'BUSINESS') {
     return (
       <div className="mx-auto max-w-5xl px-4 py-10">
-        <p className="text-muted-foreground">판매자 전환 후 이용할 수 있습니다.</p>
+        <p className="text-muted-foreground">사업자 회원만 이용할 수 있습니다.</p>
       </div>
     )
   }

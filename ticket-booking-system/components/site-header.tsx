@@ -3,7 +3,6 @@
 import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
 import { Ticket, Bell, Coins } from 'lucide-react'
-import { toast } from 'sonner'
 import { api } from '@/lib/api'
 import { useApp } from '@/lib/store'
 import { formatKRW, formatDay, formatTime } from '@/lib/domain'
@@ -24,41 +23,32 @@ const buyerNav = [
   { href: '/mypage', label: '마이페이지' },
 ]
 
-const sellerNav = [
-  { href: '/', label: '공연 둘러보기' },
+const businessNav = [
+  ...buyerNav,
   { href: '/seller', label: '공연 관리' },
   { href: '/seller/mypage', label: '판매자 마이페이지' },
 ]
 
 export function SiteHeader() {
-  const { role, setRole, userId, userName, points, authUser, accessToken, logoutAuth } = useApp()
+  const { userId, userName, points, authUser, accessToken, logoutAuth } = useApp()
   const pathname = usePathname()
   const router = useRouter()
-  const nav = role === 'BUYER' ? buyerNav : sellerNav
+  const nav = authUser?.userType === 'BUSINESS' ? businessNav : buyerNav
 
   const { entries } = useMyStandby(userId ?? '', accessToken ?? '')
-  const offeredEntries =
-    role === 'BUYER'
-      ? entries
-          .filter((e) => e.zoneRanks.some((z) => z.isHeld))
-          .map((e) => {
-            const heldZone = e.zoneRanks.find((z) => z.isHeld)?.zone
-            const performance = api.getPerformance(e.record.performanceId)
-            const session = api
-              .listSessions(e.record.performanceId)
-              .find((s) => s.id === e.record.sessionId)
-            return { standbyId: e.record.standbyId, heldZone, performance, session }
-          })
-      : []
+  const offeredEntries = authUser
+    ? entries
+        .filter((e) => e.zoneRanks.some((z) => z.isHeld))
+        .map((e) => {
+          const heldZone = e.zoneRanks.find((z) => z.isHeld)?.zone
+          const performance = api.getPerformance(e.record.performanceId)
+          const session = api
+            .listSessions(e.record.performanceId)
+            .find((s) => s.id === e.record.sessionId)
+          return { standbyId: e.record.standbyId, heldZone, performance, session }
+        })
+    : []
   const offeredCount = offeredEntries.length
-
-  function handleSetRole(next: 'BUYER' | 'SELLER') {
-    if (!authUser) {
-      toast.error('로그인이 필요합니다.')
-      return
-    }
-    setRole(next)
-  }
 
   return (
     <header className="sticky top-0 z-40 border-b border-border bg-background/85 backdrop-blur-md">
@@ -97,7 +87,7 @@ export function SiteHeader() {
         </nav>
 
         <div className="ml-auto flex items-center gap-2">
-          {role === 'BUYER' && (
+          {authUser && (
             <DropdownMenu>
               <DropdownMenuTrigger
                 className="relative hidden rounded-md p-2 text-muted-foreground outline-none transition-colors hover:text-foreground data-popup-open:text-foreground sm:inline-flex"
@@ -147,35 +137,6 @@ export function SiteHeader() {
           <div className="hidden items-center gap-1.5 rounded-md bg-secondary px-2.5 py-1.5 text-sm font-medium sm:flex">
             <Coins className="size-4 text-warning" />
             <span className="tabular-nums">{formatKRW(points)}</span>
-          </div>
-
-          <div className="flex items-center rounded-lg border border-border p-0.5">
-            <button
-              type="button"
-              onClick={() => handleSetRole('BUYER')}
-              disabled={!authUser}
-              className={cn(
-                'rounded-md px-2.5 py-1 text-xs font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50',
-                role === 'BUYER'
-                  ? 'bg-primary text-primary-foreground'
-                  : 'text-muted-foreground hover:text-foreground',
-              )}
-            >
-              구매자
-            </button>
-            <button
-              type="button"
-              onClick={() => handleSetRole('SELLER')}
-              disabled={!authUser}
-              className={cn(
-                'rounded-md px-2.5 py-1 text-xs font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50',
-                role === 'SELLER'
-                  ? 'bg-primary text-primary-foreground'
-                  : 'text-muted-foreground hover:text-foreground',
-              )}
-            >
-              판매자
-            </button>
           </div>
 
           {authUser ? (

@@ -9,13 +9,12 @@ import {
   useState,
   type ReactNode,
 } from 'react'
-import { toast } from 'sonner'
 import { api } from './api'
 import { performanceApi } from './performance-api'
 import { orderApi } from './order-api'
 import { userApi, UserApiError, type SignUpBusinessInput, type SignUpIndividualInput } from './user-api'
 import { readAuth, writeAuth, clearAuth, type StoredAuth, type StoredAuthUser } from './auth-store'
-import type { UserRole, Zone } from './types'
+import type { Zone } from './types'
 
 /** 좌석 선택 중 임시로 점유된 좌석. 새로고침 시 초기화되고, 페이지 이동만으로는 유지된다. */
 export interface HeldSeat {
@@ -26,8 +25,6 @@ export interface HeldSeat {
 }
 
 interface AppContextValue {
-  role: UserRole
-  setRole: (role: UserRole) => void
   /** 실 로그인 사용자의 mock 장부 ID(문자열로 변환된 authUser.userId). 로그인 안 했으면 null. */
   userId: string | null
   userName: string
@@ -44,9 +41,10 @@ interface AppContextValue {
   performancesLoaded: boolean
 
   /**
-   * 실 user-service 로그인 상태. 기존 role(BUYER/SELLER) 토글과는 완전히 별개다 —
-   * role은 여전히 화면 전환용 mock 토글이고, authUser는 실제 로그인 여부만 나타낸다.
-   * 로그인 안 했으면 null. 마운트 시 localStorage에서 복원되기 전엔 authLoading이 true.
+   * 실 user-service 로그인 상태. 로그인 안 했으면 null.
+   * 마운트 시 localStorage에서 복원되기 전엔 authLoading이 true.
+   * 화면 접근 범위는 authUser.userType('INDIVIDUAL' | 'BUSINESS')으로 결정된다 —
+   * BUSINESS는 구매자 기능에 판매자 기능(공연 관리, 판매자 마이페이지)이 추가로 열린다.
    */
   authUser: StoredAuthUser | null
   /** 인증 필요 API 호출 시 Authorization: Bearer 헤더로 그대로 실어 보낼 값. 비로그인 시 null. */
@@ -83,7 +81,6 @@ interface AppContextValue {
 const AppContext = createContext<AppContextValue | null>(null)
 
 export function AppProvider({ children }: { children: ReactNode }) {
-  const [roleState, setRoleState] = useState<UserRole>('BUYER')
   const [version, setVersion] = useState(0)
   const [heldSeat, setHeldSeat] = useState<HeldSeat | null>(null)
   const [performancesLoaded, setPerformancesLoaded] = useState(false)
@@ -141,15 +138,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
     }
   }, [])
 
-  // 개인(INDIVIDUAL) 회원은 판매자 화면으로 전환할 수 없다. 로그인 중 SELLER로 바뀌는
-  // 걸 막는 것과 별개로, 이미 SELLER인 상태에서 개인 계정으로 로그인/전환되면 되돌린다.
-  useEffect(() => {
-    if (auth?.user.userType === 'INDIVIDUAL' && roleState === 'SELLER') {
-      setRoleState('BUYER')
-      toast.error('개인 회원은 판매자로 전환할 수 없습니다.')
-    }
-  }, [auth, roleState])
-
   // 실 로그인 사용자가 확인될 때마다(마운트 시 복원 포함) mock 장부 레코드를 보장해둔다 —
   // 없으면 포인트 0으로 새로 만들고, 있으면 그대로 둔다. (판매자 마이페이지 등 아직
   // mock 장부만 쓰는 화면을 위해 여전히 필요 — 아래 실 포인트 잔액 조회와는 별개)
@@ -180,17 +168,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
       cancelled = true
     }
   }, [auth, version])
-
-  const setRole = useCallback(
-    (next: UserRole) => {
-      if (next === 'SELLER' && auth?.user.userType === 'INDIVIDUAL') {
-        toast.error('개인 회원은 판매자로 전환할 수 없습니다.')
-        return
-      }
-      setRoleState(next)
-    },
-    [auth],
-  )
 
   const loginWithCredentials = useCallback(async (username: string, password: string) => {
     const tokens = await userApi.loginWithQueue(username, password)
@@ -274,8 +251,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   const value = useMemo<AppContextValue>(() => {
     return {
-      role: roleState,
-      setRole,
       userId,
       userName: auth?.user.username ?? '게스트',
       points: pointsBalance,
@@ -312,8 +287,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
-    roleState,
-    setRole,
     version,
     userId,
     pointsBalance,

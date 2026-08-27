@@ -7,9 +7,9 @@
  * 시작하자마자 `requireVerifiedEmail()` 호출) — sendVerificationCode/confirmVerificationCode로
  * 먼저 인증을 마치지 않으면 가입 요청 자체가 USR400_001로 거부된다.
  *
- * userType(Role)은 'INDIVIDUAL' | 'BUSINESS' — 프론트의 role('BUYER'|'SELLER')과는
- * 다른 축의 개념이다(주문 화면에서 쓰는 role 토글과 이 로그인 상태는 lib/store.tsx에서
- * 의도적으로 분리되어 있음). 개인은 구매, 사업자는 공연 등록/판매 목적으로 가입한다고 가정.
+ * userType(Role)은 'INDIVIDUAL' | 'BUSINESS' — 화면 접근 범위를 그대로 결정한다.
+ * 개인은 구매자 기능만, 사업자는 구매자 기능에 공연 관리/판매자 마이페이지가 추가로 열린다
+ * (components/site-header.tsx의 nav 분기, 각 페이지의 authUser.userType 가드 참고).
  *
  * GET /api/users/{userId}는 서비스 간 내부 전용 API다(백엔드 컨트롤러 주석에 명시) —
  * 프론트는 절대 호출하면 안 되고, 반드시 GET /api/users/me(Authorization 헤더 기반)만 쓴다.

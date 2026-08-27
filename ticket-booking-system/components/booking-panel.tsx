@@ -15,7 +15,7 @@ import { cn } from '@/lib/utils'
 import type { Performance, PerformanceSession, Zone } from '@/lib/types'
 
 export function BookingPanel({ performance }: { performance: Performance }) {
-  const { version, role, authUser } = useApp()
+  const { version, authUser } = useApp()
   void version
 
   // performance-service/v2로 등록된 실제 공연은 숫자 ID를 그대로 쓴다(mock은 'p_xxx' 형태)
@@ -274,7 +274,7 @@ export function BookingPanel({ performance }: { performance: Performance }) {
               size="lg"
               variant="secondary"
               onClick={() => setWaitlistOpen(true)}
-              disabled={!authUser || role !== 'BUYER'}
+              disabled={!authUser}
             >
               취소표 대기 신청
             </Button>
@@ -290,16 +290,12 @@ export function BookingPanel({ performance }: { performance: Performance }) {
               className="w-full"
               size="lg"
               onClick={() => setBookingOpen(true)}
-              disabled={!authUser || role !== 'BUYER' || !selectedZone || zoneSelectionLoading}
+              disabled={!authUser || !selectedZone || zoneSelectionLoading}
             >
               {zoneSelectionLoading ? '좌석 확인 중...' : '예매하기'}
             </Button>
             {!authUser ? (
               <p className="text-center text-xs text-muted-foreground">로그인 후 예매할 수 있습니다</p>
-            ) : role !== 'BUYER' ? (
-              <p className="text-center text-xs text-muted-foreground">
-                구매자로 전환하면 예매할 수 있습니다
-              </p>
             ) : !selectedZone ? (
               <p className="text-center text-xs text-muted-foreground">좌석 등급을 먼저 선택해 주세요</p>
             ) : null}
