@@ -208,7 +208,7 @@ export const orderApi = {
     return request<CancelOrderResult>(`/api/order/${orderId}/cancel-completed`, {
       method: 'POST',
       accessToken,
-      body: JSON.stringify({ reason }),
+      body: JSON.stringify({ reason: reason ?? '고객변심' }),
     })
   },
 }
