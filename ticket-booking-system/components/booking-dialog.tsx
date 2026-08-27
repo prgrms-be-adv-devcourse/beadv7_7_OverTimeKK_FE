@@ -18,7 +18,13 @@ import { RealTossPayment } from '@/components/real-toss-payment'
 import { WaitlistDialog } from '@/components/waitlist-dialog'
 import { useApp } from '@/lib/store'
 import { orderApi, OrderApiError } from '@/lib/order-api'
-import { performanceApi, PerformanceApiError, type RealTicket, type TicketHoldResult } from '@/lib/performance-api'
+import {
+  performanceApi,
+  PerformanceApiError,
+  isTicketAvailable,
+  type RealTicket,
+  type TicketHoldResult,
+} from '@/lib/performance-api'
 import { writePendingPaymentLedger } from '@/lib/pending-payment'
 import { canWaitlistZone, formatKRW, formatDay, formatTime } from '@/lib/domain'
 import type { Performance, PerformanceSession, Zone } from '@/lib/types'
@@ -207,7 +213,7 @@ export function BookingDialog({
         id: seatId,
         rowLabel: ticket.seatRow,
         col,
-        sold: ticket.ticketStatus !== 'AVAILABLE',
+        sold: !isTicketAvailable(ticket.ticketStatus),
         selected: (selectedSeats[activeZone] ?? []).includes(seatId),
         realTicket: ticket,
       }

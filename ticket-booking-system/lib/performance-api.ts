@@ -36,13 +36,19 @@ export interface RealSession {
   performanceStartAt: string
 }
 
-export type RealTicketStatus = 'AVAILABLE' | 'HOLD' | 'RESERVED' | 'CANCELED'
+// DB 경로는 문자열('AVAILABLE' 등), Redis 경로는 숫자(0=AVAILABLE, 1=그 외)로 내려옴 — 백엔드가
+// 응답 직렬화를 아직 통일하지 않아 두 표현이 섞여서 온다. 어느 쪽이든 처리해야 함.
+export type RealTicketStatus = 'AVAILABLE' | 'HOLD' | 'RESERVED' | 'CANCELED' | 0 | 1
 
 export interface RealTicket {
   ticketId: number
   seatRow: string
   seatNum: string
   ticketStatus: RealTicketStatus
+}
+
+export function isTicketAvailable(status: RealTicketStatus): boolean {
+  return status === 'AVAILABLE' || status === 0
 }
 
 /** POST /api/tickets/select/seat 응답 — 구역 가격은 좌석 목록과 함께 한 번에 내려온다 */
