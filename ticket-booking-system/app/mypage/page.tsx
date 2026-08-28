@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
+import { useRouter } from 'next/navigation'
 import { Coins, Ticket, ArrowLeftRight } from 'lucide-react'
 import { useApp } from '@/lib/store'
 import { formatKRW, formatDateTime } from '@/lib/domain'
@@ -39,6 +40,7 @@ const ORDER_STATUS_META: Record<OrderHistoryStatus, { label: string; className: 
 }
 
 export default function MyPage() {
+  const router = useRouter()
   const { points, authUser, accessToken, authLoading } = useApp()
   const [selectedPointId, setSelectedPointId] = useState<number | null>(null)
   const [selectedOrderId, setSelectedOrderId] = useState<number | null>(null)
@@ -283,6 +285,7 @@ export default function MyPage() {
                         await orderApi.cancelCompleted(selectedOrder.orderId, accessToken)
                         setSelectedOrderId(null)
                         setRefreshTick((t) => t + 1)
+                        router.refresh()
                       } catch (error) {
                         alert(error instanceof OrderApiError ? `${error.code ?? ''} ${error.message}` : '예매 취소 실패')
                       }
