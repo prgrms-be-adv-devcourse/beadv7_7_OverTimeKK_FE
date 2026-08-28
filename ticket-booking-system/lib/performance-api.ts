@@ -168,6 +168,17 @@ export interface RealPerformanceListPage {
   performances: RealPerformanceListItem[]
 }
 
+/** GET /api/performances/seller 응답 한 줄 — 로그인한 판매자 본인 소유 공연 요약 */
+export interface SellerPerformanceResponse {
+  performanceId: number
+  title: string
+  hallName: string
+  ticketOpenAt: string
+  endDate: string
+  totSession: number
+  zoneCount: number
+}
+
 export const performanceApi = {
   /** GET /api/performances/detail — 전체 공연 목록 (원본 정보만) */
   list(): Promise<RealPerformance[]> {
@@ -277,6 +288,13 @@ export const performanceApi = {
       method: 'DELETE',
       accessToken,
     }).then(() => undefined)
+  },
+
+  /** GET /api/performances/seller — 로그인한 판매자 본인이 등록한 공연 목록. sellerId는 게이트웨이가 토큰에서 식별해 넘겨준다(프론트가 넘길 필요 없음) */
+  sellerPerformances(accessToken: string): Promise<SellerPerformanceResponse[]> {
+    return request<SellerPerformanceResponse[]>('/api/performances/seller', {
+      accessToken,
+    })
   },
 }
 

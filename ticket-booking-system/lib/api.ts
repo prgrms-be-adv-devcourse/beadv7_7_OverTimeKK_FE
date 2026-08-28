@@ -29,8 +29,9 @@ function clone<T>(v: T): T {
 }
 
 /**
- * 실 공연 병합 시 채워넣는 placeholder — 백엔드가 sellerId를 안 내려줘서 실제 소유자를
- * 특정할 수 없다. app/seller/page.tsx는 이 값으로 실 공연을 필터링하지 않는다.
+ * 실 공연 병합 시 채워넣는 placeholder — GET /api/performances/detail* 응답엔 여전히
+ * sellerId가 없다. app/seller/page.tsx는 실 공연(숫자 id) 소유권을 이 값이 아니라
+ * GET /api/performances/seller(performanceApi.sellerPerformances())로 따로 조회해 거른다.
  */
 const UNKNOWN_SELLER_ID = 'unknown-seller'
 

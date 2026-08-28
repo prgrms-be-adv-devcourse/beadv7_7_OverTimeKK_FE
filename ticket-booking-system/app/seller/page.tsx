@@ -2,11 +2,11 @@
 
 import { useEffect, useMemo, useState, type ChangeEvent } from 'react'
 import Link from 'next/link'
-import { Plus, Trash2, DollarSign, Users, Minus } from 'lucide-react'
+import { Plus, Trash2, Users, Minus } from 'lucide-react'
 import { useApp } from '@/lib/store'
 import { api } from '@/lib/api'
-import { effectivePerformanceStatus, formatKRW } from '@/lib/domain'
-import { performanceApi, PerformanceApiError, imagesApi } from '@/lib/performance-api'
+import { effectivePerformanceStatus } from '@/lib/domain'
+import { performanceApi, PerformanceApiError, imagesApi, type SellerPerformanceResponse } from '@/lib/performance-api'
 import { registerPerformanceExtras } from '@/lib/performance-extras'
 import { venueApi, type VenueSummary, type HallSummary, type HallDirectoryEntry } from '@/lib/venue-api'
 import { Button } from '@/components/ui/button'
@@ -81,13 +81,33 @@ export default function SellerPage() {
     venueApi.hallDirectory().then(setHallDirectory).catch(() => setHallDirectory(null))
   }, [])
 
+  // 실 공연(숫자 id) 소유권 판단용 — GET /api/performances/seller가 로그인 사용자 본인
+  // 소유 공연만 내려준다(게이트웨이가 토큰에서 sellerId 식별). null이면 아직 조회 전.
+  const [sellerPerformanceIds, setSellerPerformanceIds] = useState<Set<number> | null>(null)
+
+  function loadSellerPerformances() {
+    if (!accessToken) return
+    performanceApi
+      .sellerPerformances(accessToken)
+      .then((list: SellerPerformanceResponse[]) => setSellerPerformanceIds(new Set(list.map((p) => p.performanceId))))
+      .catch(() => setSellerPerformanceIds(new Set()))
+  }
+
+  useEffect(() => {
+    loadSellerPerformances()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [accessToken])
+
   const performances = useMemo(() => {
     const all = api.listPerformances()
-    // 실 공연(숫자 id)은 백엔드 응답에 sellerId가 없어서 소유권을 알 수 없다 — 필터링하지
-    // 않고 전부 보여준다(BE-요청: PerformanceDetailResponse.sellerId 추가). mock 공연(문자열
-    // id, 현재는 없음)만 소유권으로 거른다.
-    return all.filter((performance) => /^\d+$/.test(performance.id) || performance.sellerId === userId)
-  }, [version, userId])
+    // 실 공연(숫자 id)은 /api/performances/seller로 받은 본인 소유 id 집합으로 거른다.
+    // mock 공연(문자열 id)은 기존처럼 sellerId로 거른다.
+    return all.filter((performance) =>
+      /^\d+$/.test(performance.id)
+        ? (sellerPerformanceIds?.has(Number(performance.id)) ?? false)
+        : performance.sellerId === userId
+    )
+  }, [version, userId, sellerPerformanceIds])
 
   const [draftMode, setDraftMode] = useState(false)
   const [form, setForm] = useState<{
@@ -274,6 +294,7 @@ export default function SellerPage() {
         })
         api.importRealPerformances([{ real: created, sessions: realSessions }])
         refresh()
+        loadSellerPerformances()
       }
 
       setDraftMode(false)
@@ -309,6 +330,7 @@ export default function SellerPage() {
     try {
       await performanceApi.delete(Number(performance.id), accessToken)
       deletePerformance(performance.id)
+      loadSellerPerformances()
     } catch (e) {
       const message = e instanceof PerformanceApiError ? e.message : '공연 삭제에 실패했습니다.'
       alert(message)
@@ -572,10 +594,6 @@ export default function SellerPage() {
                 <div className="flex items-center gap-2">
                   <Users className="size-4" />
                   <span>{sessions.length}회차 · {prices.length}개 구역</span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <DollarSign className="size-4" />
-                  <span>기본 가격: {prices.length > 0 ? formatKRW(Math.min(...prices.map((p) => p.price))) : '-'}</span>
                 </div>
               </div>
               <div className="mt-4 flex flex-wrap gap-2">
