@@ -190,6 +190,11 @@ export const performanceApi = {
     return request<RealPerformanceListPage>(`/api/performances?page=${page}`)
   },
 
+  /** GET /api/performances/search?title= — 공연명 검색. 응답 형태는 listPaged와 동일 */
+  search(title: string): Promise<RealPerformanceListPage> {
+    return request<RealPerformanceListPage>(`/api/performances/search?title=${encodeURIComponent(title)}`)
+  },
+
   /** GET /api/performances/detail/{id} */
   get(performanceId: number): Promise<RealPerformance> {
     return request<RealPerformance>(`/api/performances/detail/${performanceId}`)

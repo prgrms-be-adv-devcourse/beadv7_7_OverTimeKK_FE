@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npx tsc *)",
+      "Bash(lsof *)",
+      "Bash(kill 94361 *)",
+      "Bash(ps -p 94361 -o pid,stat,command)"
+    ]
+  }
+}
