@@ -11,9 +11,10 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
 
-function validateCommon(username: string, password: string) {
+function validateCommon(username: string, password: string, passwordConfirm: string) {
   if (!username.trim()) return '아이디를 입력해 주세요.'
   if (password.length < 8) return '비밀번호는 8자 이상이어야 합니다.'
+  if (password !== passwordConfirm) return '비밀번호가 일치하지 않습니다.'
   return null
 }
 
@@ -131,11 +132,12 @@ export default function SignUpPage() {
   const { signUpIndividual, signUpBusiness } = useApp()
 
   const individualEmail = useEmailVerification()
-  const [individual, setIndividual] = useState({ username: '', password: '' })
+  const [individual, setIndividual] = useState({ username: '', password: '', passwordConfirm: '' })
   const businessEmail = useEmailVerification()
   const [business, setBusiness] = useState({
     username: '',
     password: '',
+    passwordConfirm: '',
     businessName: '',
     businessNumber: '',
   })
@@ -143,7 +145,7 @@ export default function SignUpPage() {
 
   async function handleSubmitIndividual(event: FormEvent) {
     event.preventDefault()
-    const error = validateCommon(individual.username, individual.password)
+    const error = validateCommon(individual.username, individual.password, individual.passwordConfirm)
     if (error) {
       alert(error)
       return
@@ -154,7 +156,9 @@ export default function SignUpPage() {
     }
     setSubmitting(true)
     try {
-      await signUpIndividual({ ...individual, email: individualEmail.email })
+      // passwordConfirm은 프론트 전용 검증값이라 서버로는 안 보낸다.
+      const { passwordConfirm: _passwordConfirm, ...signupInput } = individual
+      await signUpIndividual({ ...signupInput, email: individualEmail.email })
       router.push('/')
     } catch (e) {
       alert(userErrorMessage(e, '회원가입에 실패했습니다. 백엔드 서버 상태를 확인해 주세요.'))
@@ -165,7 +169,7 @@ export default function SignUpPage() {
 
   async function handleSubmitBusiness(event: FormEvent) {
     event.preventDefault()
-    const error = validateCommon(business.username, business.password)
+    const error = validateCommon(business.username, business.password, business.passwordConfirm)
     if (error) {
       alert(error)
       return
@@ -180,7 +184,9 @@ export default function SignUpPage() {
     }
     setSubmitting(true)
     try {
-      await signUpBusiness({ ...business, email: businessEmail.email })
+      // passwordConfirm은 프론트 전용 검증값이라 서버로는 안 보낸다.
+      const { passwordConfirm: _passwordConfirm, ...signupInput } = business
+      await signUpBusiness({ ...signupInput, email: businessEmail.email })
       router.push('/')
     } catch (e) {
       alert(userErrorMessage(e, '회원가입에 실패했습니다. 백엔드 서버 상태를 확인해 주세요.'))
@@ -230,12 +236,25 @@ export default function SignUpPage() {
                 />
                 <p className="text-xs text-muted-foreground">8자 이상 입력해 주세요.</p>
               </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="ind-password-confirm">비밀번호 확인</Label>
+                <Input
+                  id="ind-password-confirm"
+                  type="password"
+                  autoComplete="new-password"
+                  value={individual.passwordConfirm}
+                  onChange={(e) => setIndividual({ ...individual, passwordConfirm: e.target.value })}
+                />
+                {individual.passwordConfirm && individual.passwordConfirm !== individual.password && (
+                  <p className="text-xs text-destructive">비밀번호가 일치하지 않습니다.</p>
+                )}
+              </div>
 
               <Button
                 type="submit"
                 size="lg"
                 className="w-full"
-                disabled={submitting || !individualEmail.verified}
+                disabled={submitting || !individualEmail.verified || individual.password !== individual.passwordConfirm}
               >
                 {submitting ? '가입 중...' : '개인 회원가입'}
               </Button>
@@ -266,6 +285,19 @@ export default function SignUpPage() {
                 <p className="text-xs text-muted-foreground">8자 이상 입력해 주세요.</p>
               </div>
               <div className="space-y-1.5">
+                <Label htmlFor="biz-password-confirm">비밀번호 확인</Label>
+                <Input
+                  id="biz-password-confirm"
+                  type="password"
+                  autoComplete="new-password"
+                  value={business.passwordConfirm}
+                  onChange={(e) => setBusiness({ ...business, passwordConfirm: e.target.value })}
+                />
+                {business.passwordConfirm && business.passwordConfirm !== business.password && (
+                  <p className="text-xs text-destructive">비밀번호가 일치하지 않습니다.</p>
+                )}
+              </div>
+              <div className="space-y-1.5">
                 <Label htmlFor="biz-name">사업자명</Label>
                 <Input
                   id="biz-name"
@@ -286,7 +318,7 @@ export default function SignUpPage() {
                 type="submit"
                 size="lg"
                 className="w-full"
-                disabled={submitting || !businessEmail.verified}
+                disabled={submitting || !businessEmail.verified || business.password !== business.passwordConfirm}
               >
                 {submitting ? '가입 중...' : '사업자 회원가입'}
               </Button>
