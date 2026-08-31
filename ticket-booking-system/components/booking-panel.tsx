@@ -10,7 +10,7 @@ import { WaitlistDialog } from '@/components/waitlist-dialog'
 import { api } from '@/lib/api'
 import { performanceApi, type RealPerformanceSessionSeats } from '@/lib/performance-api'
 import { useApp } from '@/lib/store'
-import { effectivePerformanceStatus, formatKRW, formatDay, formatTime, parseDateTime, NOW } from '@/lib/domain'
+import { effectivePerformanceStatus, formatKRW, formatDay, formatTime, parseDateTime, now } from '@/lib/domain'
 import { cn } from '@/lib/utils'
 import type { Performance, PerformanceSession, Zone } from '@/lib/types'
 
@@ -87,8 +87,17 @@ export function BookingPanel({ performance }: { performance: Performance }) {
   // real 공연은 sessions/seats 응답의 ticketOpenAt이 최신 원천이고, 로딩 전에는 merge된
   // performance.ticketOpenAt(같은 값)으로 대체해 깜빡임 없이 표시한다.
   const ticketOpenAt = isRealPerformance && realSessionSeats ? realSessionSeats.ticketOpenAt : performance.ticketOpenAt
-  const opened = parseDateTime(ticketOpenAt).getTime() <= NOW.getTime()
   const openAt = parseDateTime(ticketOpenAt).getTime()
+  // now()는 페이지를 새로고침해야만 다시 계산되므로, 티켓 오픈 시각이 지나는 그 순간을
+  // 직접 잡아내려면 아래 Countdown의 onComplete로 리렌더를 트리거해야 한다(그래야 새로고침
+  // 없이도 그 순간 예매 버튼이 즉시 풀린다).
+  const [ticketJustOpened, setTicketJustOpened] = useState(false)
+  // 클라이언트 사이드 네비게이션으로 다른 공연으로 넘어와도(컴포넌트가 안 다시 마운트될 수
+  // 있음) 이전 공연에서 켜졌던 플래그가 새 공연에 잘못 남지 않도록 초기화한다.
+  useEffect(() => {
+    setTicketJustOpened(false)
+  }, [performance.id])
+  const opened = ticketJustOpened || openAt <= now().getTime()
   const status = effectivePerformanceStatus(performance)
   const cancelled = status === 'CANCELLED'
   const ended = status === 'ENDED'
@@ -171,7 +180,7 @@ export function BookingPanel({ performance }: { performance: Performance }) {
       {!opened && (
         <div className="rounded-lg border border-primary/20 bg-primary/5 p-4 text-center">
           <p className="text-sm font-medium text-muted-foreground">티켓 오픈까지</p>
-          <Countdown target={openAt} className="mt-2 flex justify-center" />
+          <Countdown target={openAt} onComplete={() => setTicketJustOpened(true)} className="mt-2 flex justify-center" />
           <p className="mt-2 text-xs text-muted-foreground">
             {formatDay(ticketOpenAt)} {formatTime(ticketOpenAt)} 오픈
           </p>
@@ -183,7 +192,7 @@ export function BookingPanel({ performance }: { performance: Performance }) {
         <p className="mb-2 text-sm font-semibold">회차 선택</p>
         <div className="grid gap-2">
           {sessions.map((s: PerformanceSession) => {
-            const past = parseDateTime(s.performanceStartAt).getTime() <= NOW.getTime()
+            const past = parseDateTime(s.performanceStartAt).getTime() <= now().getTime()
             const active = s.id === selectedSessionId
             return (
               <button

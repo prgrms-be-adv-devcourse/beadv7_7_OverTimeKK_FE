@@ -66,18 +66,6 @@ interface AppContextValue {
 
   // 구매자 액션
   createOrder: typeof api.createOrder
-  cancelOrder: typeof api.cancelOrder
-  requestCancelOrder: typeof api.requestCancelOrder
-
-  // 판매자 액션
-  createPerformance: typeof api.createPerformance
-  updatePerformance: typeof api.updatePerformance
-  deletePerformance: typeof api.deletePerformance
-  createSession: typeof api.createSession
-  deleteSession: typeof api.deleteSession
-  setZonePrices: typeof api.setZonePrices
-  sellerCancelPerformance: (performanceId: string) => void
-  runPointReward: () => number
 }
 
 const AppContext = createContext<AppContextValue | null>(null)
@@ -279,22 +267,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
       holdSeat,
       releaseSeat,
       createOrder: withRefresh(api.createOrder.bind(api)),
-      cancelOrder: withRefresh(api.cancelOrder.bind(api)),
-      requestCancelOrder: withRefresh(api.requestCancelOrder.bind(api)),
-      createPerformance: withRefresh(api.createPerformance.bind(api)),
-      updatePerformance: withRefresh(api.updatePerformance.bind(api)),
-      deletePerformance: withRefresh((id: string) => {
-        api.deletePerformance(id)
-      }),
-      createSession: withRefresh(api.createSession.bind(api)),
-      deleteSession: withRefresh((sessionId: string) => {
-        api.deleteSession(sessionId)
-      }),
-      setZonePrices: withRefresh(api.setZonePrices.bind(api)),
-      sellerCancelPerformance: withRefresh((performanceId: string) => {
-        api.sellerCancelPerformance(performanceId)
-      }),
-      runPointReward: withRefresh(api.runPointReward.bind(api)),
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [

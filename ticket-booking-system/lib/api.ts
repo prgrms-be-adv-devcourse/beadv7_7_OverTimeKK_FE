@@ -7,7 +7,6 @@
  */
 
 import { seedHalls, seatLabelFor } from './mock-data'
-import { computeRefund, NOW, parseDateTime } from './domain'
 import { getPerformanceExtras } from './performance-extras'
 import type { RealPerformance, RealSession } from './performance-api'
 import {
@@ -66,17 +65,6 @@ export type DbSnapshot = typeof db
 /** 전체 상태 스냅샷 (React 스토어 동기화용) */
 export function snapshot(): DbSnapshot {
   return clone(db)
-}
-
-function ticketOpened(p: Performance): boolean {
-  return parseDateTime(p.ticketOpenAt).getTime() <= NOW.getTime()
-}
-
-/** 편의: 회차의 특정 구역 잔여석 */
-function availableSeats(sessionId: string, zone: Zone): number {
-  const inv = db.inventory.find((i) => i.sessionId === sessionId && i.zone === zone)
-  if (!inv) return 0
-  return inv.total - inv.sold
 }
 
 // ------------------------------------------------------------------
@@ -259,96 +247,6 @@ export const api = {
     )
   },
 
-  ticketOpened,
-  availableSeats,
-
-  // ----------------------------------------------------------------
-  // 판매자 - 공연/회차/좌석가 관리
-  // ----------------------------------------------------------------
-
-  // POST /api/performances
-  createPerformance(
-    input: Omit<Performance, 'id' | 'status'> & { status?: Performance['status'] },
-  ): Performance {
-    const perf: Performance = {
-      ...input,
-      id: nextId('p'),
-      status: input.status ?? 'DRAFT',
-    }
-    db.performances.push(perf)
-    return clone(perf)
-  },
-
-  // PUT /api/performances/{id}
-  updatePerformance(id: string, patch: Partial<Performance>): Performance {
-    const perf = db.performances.find((p) => p.id === id)
-    if (!perf) throw new Error('공연을 찾을 수 없습니다.')
-    if (ticketOpened(perf)) throw new Error('티켓 오픈 이후에는 수정할 수 없습니다.')
-    Object.assign(perf, patch)
-    return clone(perf)
-  },
-
-  // DELETE /api/performances/{id}
-  deletePerformance(id: string): void {
-    const perf = db.performances.find((p) => p.id === id)
-    if (!perf) throw new Error('공연을 찾을 수 없습니다.')
-    if (ticketOpened(perf)) throw new Error('티켓 오픈 이후에는 삭제할 수 없습니다.')
-    db.performances = db.performances.filter((p) => p.id !== id)
-    const sessionIds = db.sessions.filter((s) => s.performanceId === id).map((s) => s.id)
-    db.sessions = db.sessions.filter((s) => s.performanceId !== id)
-    db.zonePrices = db.zonePrices.filter((z) => z.performanceId !== id)
-    db.inventory = db.inventory.filter((i) => !sessionIds.includes(i.sessionId))
-  },
-
-  // POST /api/performances/{id}/sessions
-  createSession(
-    performanceId: string,
-    input: Omit<PerformanceSession, 'id' | 'performanceId'>,
-  ): PerformanceSession {
-    const perf = db.performances.find((p) => p.id === performanceId)
-    if (perf && ticketOpened(perf)) throw new Error('티켓 오픈 이후에는 회차를 추가할 수 없습니다.')
-    const session: PerformanceSession = { ...input, id: nextId('s'), performanceId }
-    db.sessions.push(session)
-    // 기존 구역 가격에 맞춰 좌석 재고 생성
-    const hall = perf ? db.halls.find((h) => h.id === perf.hallId) : undefined
-    const prices = db.zonePrices.filter((z) => z.performanceId === performanceId)
-    for (const price of prices) {
-      db.inventory.push({
-        sessionId: session.id,
-        zone: price.zone,
-        total: hall ? hall.capacity[price.zone] : 100,
-        sold: 0,
-        occupiedSeats: [],
-      })
-    }
-    return clone(session)
-  },
-
-  // DELETE /api/sessions/{id}
-  deleteSession(sessionId: string): void {
-    const session = db.sessions.find((s) => s.id === sessionId)
-    if (!session) return
-    const perf = db.performances.find((p) => p.id === session.performanceId)
-    if (perf && ticketOpened(perf)) throw new Error('티켓 오픈 이후에는 삭제할 수 없습니다.')
-    db.sessions = db.sessions.filter((s) => s.id !== sessionId)
-    db.inventory = db.inventory.filter((i) => i.sessionId !== sessionId)
-  },
-
-  // PUT /api/performances/{id}/prices
-  setZonePrices(performanceId: string, prices: { zone: Zone; price: number }[]): ZonePrice[] {
-    const perf = db.performances.find((p) => p.id === performanceId)
-    if (perf && ticketOpened(perf)) throw new Error('티켓 오픈 이후에는 좌석 금액을 수정할 수 없습니다.')
-    db.zonePrices = db.zonePrices.filter((z) => z.performanceId !== performanceId)
-    const created = prices.map((p) => ({
-      id: nextId('zp'),
-      performanceId,
-      zone: p.zone,
-      price: p.price,
-    }))
-    db.zonePrices.push(...created)
-    return clone(created)
-  },
-
   // ----------------------------------------------------------------
   // 구매자 - 예매 / 결제 / 취소
   // ----------------------------------------------------------------
@@ -433,104 +331,6 @@ export const api = {
     refreshSoldOut(input.performanceId)
 
     return { order: clone(order), payment: clone(payment) }
-  },
-
-  // POST /api/orders/{id}/cancel  (환불 정책 적용)
-  cancelOrder(orderId: string): { order: Order; refundAmount: number } {
-    const order = db.orders.find((o) => o.id === orderId)
-    if (!order) throw new Error('주문을 찾을 수 없습니다.')
-    if (order.status !== 'PAID') throw new Error('취소할 수 없는 주문입니다.')
-    const session = db.sessions.find((s) => s.id === order.sessionId)
-    if (!session) throw new Error('회차 정보를 찾을 수 없습니다.')
-    if (parseDateTime(session.performanceStartAt).getTime() <= NOW.getTime()) {
-      throw new Error('이미 시작한 공연은 취소할 수 없습니다.')
-    }
-
-    const { refundAmount } = computeRefund(order.totalAmount, session.performanceStartAt)
-    order.status = 'CANCELLED'
-    order.refundedAmount = refundAmount
-
-    // 결제 취소 처리
-    const payment = db.payments.find((p) => p.orderId === orderId)
-    if (payment) {
-      payment.status = refundAmount === order.totalAmount ? 'CANCELLED' : 'PARTIAL_CANCELLED'
-    }
-
-    // 좌석 재고 반환. 취소표 대기열 매칭은 이제 실제 standby 백엔드가 처리한다 (mock에서는 다루지 않음).
-    for (const item of order.items) {
-      const inv = db.inventory.find((i) => i.sessionId === order.sessionId && i.zone === item.zone)
-      if (inv) {
-        inv.sold = Math.max(0, inv.sold - item.quantity)
-        inv.occupiedSeats = inv.occupiedSeats.filter((label) => !item.seatLabels.includes(label))
-      }
-    }
-    refreshSoldOut(order.performanceId)
-
-    return { order: clone(order), refundAmount }
-  },
-
-  // POST /api/orders/{id}/request-cancel  (취소 요청만 생성)
-  requestCancelOrder(orderId: string): { order: Order } {
-    const order = db.orders.find((o) => o.id === orderId)
-    if (!order) throw new Error('주문을 찾을 수 없습니다.')
-    if (order.status !== 'PAID') throw new Error('취소 요청을 보낼 수 없는 주문입니다.')
-    const session = db.sessions.find((s) => s.id === order.sessionId)
-    if (!session) throw new Error('회차 정보를 찾을 수 없습니다.')
-    if (parseDateTime(session.performanceStartAt).getTime() <= NOW.getTime()) {
-      throw new Error('이미 시작한 공연은 취소 요청을 보낼 수 없습니다.')
-    }
-
-    order.status = 'CANCEL_REQUESTED'
-    return { order: clone(order) }
-  },
-
-  // POST /api/performances/{id}/cancel  (판매자 취소 → 전액 환불)
-  sellerCancelPerformance(performanceId: string): { refundedOrders: number } {
-    const perf = db.performances.find((p) => p.id === performanceId)
-    if (!perf) throw new Error('공연을 찾을 수 없습니다.')
-    perf.status = 'CANCELLED'
-    const sessionIds = db.sessions.filter((s) => s.performanceId === performanceId).map((s) => s.id)
-    let refundedOrders = 0
-    for (const order of db.orders) {
-      if (sessionIds.includes(order.sessionId) && order.status === 'PAID') {
-        order.status = 'REFUNDED'
-        order.refundedAmount = order.totalAmount
-        const payment = db.payments.find((p) => p.orderId === order.id)
-        if (payment) payment.status = 'CANCELLED'
-        refundedOrders += 1
-      }
-    }
-    return { refundedOrders }
-  },
-
-  // 공연 종료 익일 포인트 적립 배치 (데모용 트리거)
-  // POST /api/batch/reward-points
-  runPointReward(): number {
-    let count = 0
-    for (const perf of db.performances) {
-      if (perf.status !== 'ENDED') continue
-      const sessionIds = db.sessions.filter((s) => s.performanceId === perf.id).map((s) => s.id)
-      for (const order of db.orders) {
-        if (!sessionIds.includes(order.sessionId) || order.status !== 'PAID') continue
-        const alreadyRewarded = db.points.some(
-          (p) => p.reason.includes(order.id),
-        )
-        if (alreadyRewarded) continue
-        const reward = Math.round(order.totalAmount * 0.01)
-        db.points.push({
-          id: nextId('pt'),
-          userId: order.buyerId,
-          type: 'EARN',
-          amount: reward,
-          reason: `공연 관람 적립 (${perf.title}) #${order.id}`,
-          createdAt: formatNow(),
-        })
-        const user = db.users.find((u) => u.id === order.buyerId)
-        if (user) user.points += reward
-        count += 1
-      }
-    }
-    return count
   },
 }
 

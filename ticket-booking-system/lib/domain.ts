@@ -1,8 +1,11 @@
 import type { Performance, PerformanceStatus, Zone } from './types'
 
-/** 서비스 기준 "현재 시각". */
-export const NOW = new Date()
-
+/**
+ * 서비스 기준 "현재 시각" — 호출할 때마다 새로 계산한다.
+ * 예전엔 모듈 로드 시 한 번만 계산되는 `NOW` 상수였는데, 그러면 브라우저 탭을 새로고침하지
+ * 않는 한 "현재 시각"이 페이지를 처음 연 시점에 영원히 고정돼버려서 티켓 오픈 시각이 지나도
+ * 예매 버튼이 안 풀리는 등의 버그가 있었다 — 반드시 함수로 호출해서 매번 새로 읽을 것.
+ */
 export function now(): Date {
   return new Date()
 }
@@ -69,10 +72,10 @@ export function formatTime(value: string): string {
  */
 export function effectivePerformanceStatus(performance: Performance): PerformanceStatus {
   if (performance.status === 'CANCELLED') return 'CANCELLED'
-  if (NOW.getTime() < parseDateTime(performance.ticketOpenAt).getTime()) return 'DRAFT'
+  if (now().getTime() < parseDateTime(performance.ticketOpenAt).getTime()) return 'DRAFT'
   const endOfSaleDay = parseDateTime(performance.endDate)
   endOfSaleDay.setHours(23, 59, 59, 999)
-  if (NOW.getTime() > endOfSaleDay.getTime()) return 'ENDED'
+  if (now().getTime() > endOfSaleDay.getTime()) return 'ENDED'
   return performance.status
 }
 
@@ -125,7 +128,7 @@ export function daysBetween(from: Date, to: Date): number {
   return Math.floor(ms / (1000 * 60 * 60 * 24))
 }
 
-export function computeRefund(totalAmount: number, performanceStartAt: string, at: Date = NOW): {
+export function computeRefund(totalAmount: number, performanceStartAt: string, at: Date = now()): {
   policy: RefundPolicy
   refundAmount: number
   feeAmount: number
