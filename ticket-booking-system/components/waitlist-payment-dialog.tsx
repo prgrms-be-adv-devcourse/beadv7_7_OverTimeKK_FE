@@ -20,7 +20,7 @@ import { useApp } from '@/lib/store'
 import { orderApi, OrderApiError } from '@/lib/order-api'
 import { performanceApi } from '@/lib/performance-api'
 import { writePendingPaymentLedger } from '@/lib/pending-payment'
-import { formatKRW, formatDay, formatTime } from '@/lib/domain'
+import { formatKRW, formatDigits, formatDay, formatTime } from '@/lib/domain'
 import type { Performance, PerformanceSession, Zone } from '@/lib/types'
 import { standbyApi, standbyErrorMessage } from '@/lib/standby-api'
 
@@ -264,7 +264,7 @@ export function WaitlistPaymentDialog({
               <div className="flex items-center gap-2">
                 <Input
                   inputMode="numeric"
-                  value={pointsInput}
+                  value={formatDigits(pointsInput)}
                   onChange={(e) => handlePointsChange(e.target.value)}
                   disabled={maxUsablePoints <= 0 || expired}
                   className="text-right"

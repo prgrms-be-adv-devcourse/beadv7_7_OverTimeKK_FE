@@ -26,7 +26,7 @@ import {
   type TicketHoldResult,
 } from '@/lib/performance-api'
 import { writePendingPaymentLedger } from '@/lib/pending-payment'
-import { canWaitlistZone, formatKRW, formatDay, formatTime } from '@/lib/domain'
+import { canWaitlistZone, formatKRW, formatDigits, formatDay, formatTime } from '@/lib/domain'
 import type { Performance, PerformanceSession, Zone } from '@/lib/types'
 
 const STEP_LABELS = ['좌석 선택', '가격 선택', '결제']
@@ -554,7 +554,7 @@ export function BookingDialog({
               <div className="flex items-center gap-2">
                 <Input
                   inputMode="numeric"
-                  value={pointsInput}
+                  value={formatDigits(pointsInput)}
                   onChange={(e) => handlePointsChange(e.target.value)}
                   disabled={maxUsablePoints <= 0}
                   className="text-right"

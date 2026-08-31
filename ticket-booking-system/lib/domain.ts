@@ -17,6 +17,12 @@ export function formatKRW(amount: number): string {
   return `${amount.toLocaleString('ko-KR')}원`
 }
 
+/** 숫자 문자열에 천단위 콤마를 붙인다 — 금액 입력 필드 표시용('원' 접미사 없음). 빈 문자열은 그대로 반환. */
+export function formatDigits(digits: string): string {
+  if (!digits) return ''
+  return Number(digits).toLocaleString('ko-KR')
+}
+
 export function formatDateTime(value: string): string {
   const d = parseDateTime(value)
   return d.toLocaleString('ko-KR', {

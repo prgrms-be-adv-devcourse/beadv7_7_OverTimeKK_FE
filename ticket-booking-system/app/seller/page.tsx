@@ -5,7 +5,7 @@ import Link from 'next/link'
 import { Plus, Users, Minus } from 'lucide-react'
 import { useApp } from '@/lib/store'
 import { api } from '@/lib/api'
-import { effectivePerformanceStatus } from '@/lib/domain'
+import { effectivePerformanceStatus, formatDigits } from '@/lib/domain'
 import { performanceApi, PerformanceApiError, imagesApi, type SellerPerformanceResponse } from '@/lib/performance-api'
 import { registerPerformanceExtras } from '@/lib/performance-extras'
 import { venueApi, type VenueSummary, type HallSummary, type HallDirectoryEntry } from '@/lib/venue-api'
@@ -530,9 +530,9 @@ export default function SellerPage() {
                       <p className="mb-2 text-sm font-medium">가격</p>
                       <Input
                         placeholder="가격 입력"
-                        type="number"
-                        value={row.price}
-                        onChange={(e) => updatePriceRow(row.id, { price: e.target.value })}
+                        inputMode="numeric"
+                        value={formatDigits(row.price)}
+                        onChange={(e) => updatePriceRow(row.id, { price: e.target.value.replace(/[^0-9]/g, '') })}
                       />
                     </div>
                     {priceRows.length > 1 && (
