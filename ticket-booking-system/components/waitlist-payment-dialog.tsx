@@ -22,21 +22,15 @@ import { performanceApi } from '@/lib/performance-api'
 import { writePendingPaymentLedger } from '@/lib/pending-payment'
 import { formatKRW, formatDay, formatTime } from '@/lib/domain'
 import type { Performance, PerformanceSession, Zone } from '@/lib/types'
-import { standbyApi, standbyErrorMessage, STANDBY_OFFER_TTL_SECONDS } from '@/lib/standby-api'
-import { standbyStore } from '@/lib/standby-store'
+import { standbyApi, standbyErrorMessage } from '@/lib/standby-api'
 
 /** 대기순번 매칭으로 배정된 비지정석은 좌석 선택 단계가 없어 2단계(가격 선택 → 결제)로 시작 */
 const STEP_LABELS = ['가격 선택', '결제']
 
-/**
- * 남은 시간을 실시간(절대 만료시각 기준)으로 계산 — 창을 닫았다 열어도 시간은 계속 흐른다.
- * 백엔드 조회 API는 결제 만료시각을 내려주지 않는다(ticket 도메인 소관, 문서 범위 밖) —
- * 그래서 프론트가 매칭(isHeld) 감지 시각을 로컬에 기록해두고 여기서 30분을 더해 근사 계산한다.
- */
-function remainingSeconds(heldSince?: string): number {
-  if (!heldSince) return STANDBY_OFFER_TTL_SECONDS
-  const expiresAt = new Date(heldSince).getTime() + STANDBY_OFFER_TTL_SECONDS * 1000
-  return Math.max(0, Math.floor((expiresAt - Date.now()) / 1000))
+/** 남은 시간을 실시간(서버가 내려준 절대 만료시각 기준)으로 계산 — 창을 닫았다 열어도 시간은 계속 흐른다. */
+function remainingSeconds(expiredAt: string | null): number {
+  if (!expiredAt) return 0
+  return Math.max(0, Math.floor((new Date(expiredAt).getTime() - Date.now()) / 1000))
 }
 
 function formatCountdown(totalSeconds: number): string {
@@ -51,7 +45,7 @@ export function WaitlistPaymentDialog({
   standbyId,
   zone,
   ticketId,
-  heldSince,
+  expiredAt,
   performance,
   session,
   onSettled,
@@ -61,13 +55,13 @@ export function WaitlistPaymentDialog({
   standbyId: number
   zone: Zone
   ticketId: number
-  heldSince?: string
+  expiredAt: string | null
   performance: Performance
   session: PerformanceSession
   onSettled: () => void
 }) {
   const { points, authUser, accessToken } = useApp()
-  const [remaining, setRemaining] = useState(() => remainingSeconds(heldSince))
+  const [remaining, setRemaining] = useState(() => remainingSeconds(expiredAt))
   const [processing, setProcessing] = useState(false)
   const [step, setStep] = useState<'price' | 'pay'>('price')
   const [pointsInput, setPointsInput] = useState('0')
@@ -82,12 +76,12 @@ export function WaitlistPaymentDialog({
 
   // 절대 만료시각(근사치) 기준으로 1초마다 남은 시간 재계산
   useEffect(() => {
-    setRemaining(remainingSeconds(heldSince))
+    setRemaining(remainingSeconds(expiredAt))
     const timer = setInterval(() => {
-      setRemaining(remainingSeconds(heldSince))
+      setRemaining(remainingSeconds(expiredAt))
     }, 1000)
     return () => clearInterval(timer)
-  }, [heldSince])
+  }, [expiredAt])
 
   // 다이얼로그가 열릴 때마다 초기화(다른 대기 건으로 다시 열릴 수 있음)
   useEffect(() => {
@@ -166,7 +160,6 @@ export function WaitlistPaymentDialog({
           selections: [{ zone, quantity: 1 }],
           fromWaitlist: true,
           pointsUsed,
-          standbyCleanup: { userId: String(authUser.userId), standbyId },
         })
 
         setPendingPayment({
@@ -196,7 +189,6 @@ export function WaitlistPaymentDialog({
     setProcessing(true)
     try {
       await standbyApi.cancelZone(standbyId, zone, accessToken)
-      standbyStore.removeZone(String(authUser.userId), standbyId, zone)
       toast.info('우선 예매를 취소했습니다.', {
         description: '대기열에서 취소 처리되었습니다.',
       })

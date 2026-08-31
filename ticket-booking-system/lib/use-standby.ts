@@ -1,54 +1,33 @@
 'use client'
 
 import { useCallback, useEffect, useState } from 'react'
-import { standbyApi, StandbyApiError, type StandbyZoneRank } from './standby-api'
-import { standbyStore, type StandbyRecord } from './standby-store'
-
-export interface StandbySummaryEntry {
-  record: StandbyRecord
-  zoneRanks: StandbyZoneRank[]
-}
+import { standbyApi, type StandbyListItem } from './standby-api'
 
 const POLL_INTERVAL_MS = 15000
 
-/** 내 대기 신청 목록을 로컬 저장소 기준으로 조회하고, 각 건의 순위/매칭 상태를 주기적으로 갱신한다. */
-export function useMyStandby(userId: string, accessToken: string) {
-  const [entries, setEntries] = useState<StandbySummaryEntry[]>([])
+/** "내 대기 신청" 화면에서 다루는 상태 — RESERVED(결제 완료)/CANCELLED는 더 이상 활성 대기가 아니라서 제외. */
+const ACTIVE_STATUSES = new Set<StandbyListItem['status']>(['WAITING', 'HELD'])
+
+/** 내 대기 신청 목록을 서버(GET /api/standby)에서 직접 조회하고 15초 간격으로 갱신한다. */
+export function useMyStandby(accessToken: string) {
+  const [entries, setEntries] = useState<StandbyListItem[]>([])
   const [loading, setLoading] = useState(false)
 
   const refresh = useCallback(async () => {
-    const records = standbyStore.list(userId)
-    if (records.length === 0) {
+    if (!accessToken) {
       setEntries([])
       return
     }
     setLoading(true)
-    const results = await Promise.all(
-      records.map(async (record): Promise<StandbySummaryEntry | null> => {
-        try {
-          const detail = await standbyApi.get(record.standbyId, accessToken)
-          if (detail.zoneRanks.some((z) => z.isHeld)) {
-            standbyStore.markHeld(userId, record.standbyId)
-          } else {
-            standbyStore.clearHeld(userId, record.standbyId)
-          }
-          return { record, zoneRanks: detail.zoneRanks }
-        } catch (error) {
-          if (
-            error instanceof StandbyApiError &&
-            (error.code === 'STB404_001' || error.code === 'STB409_004')
-          ) {
-            standbyStore.remove(userId, record.standbyId)
-            return null
-          }
-          // 일시적 조회 실패 — 목록에는 남기고 순위 정보만 비워둔다.
-          return { record, zoneRanks: [] }
-        }
-      }),
-    )
-    setEntries(results.filter((r): r is StandbySummaryEntry => r != null))
-    setLoading(false)
-  }, [userId, accessToken])
+    try {
+      const list = await standbyApi.list(accessToken)
+      setEntries(list.filter((item) => ACTIVE_STATUSES.has(item.status)))
+    } catch (error) {
+      console.warn('대기 목록 조회 실패:', error)
+    } finally {
+      setLoading(false)
+    }
+  }, [accessToken])
 
   useEffect(() => {
     refresh()

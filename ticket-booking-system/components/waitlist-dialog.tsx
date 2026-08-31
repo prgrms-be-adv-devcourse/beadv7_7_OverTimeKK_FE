@@ -17,7 +17,6 @@ import { formatDay, formatTime, ZONE_META } from '@/lib/domain'
 import { cn } from '@/lib/utils'
 import type { Performance, PerformanceSession, Zone } from '@/lib/types'
 import { standbyApi, standbyErrorMessage, toBackendPerformanceId } from '@/lib/standby-api'
-import { standbyStore } from '@/lib/standby-store'
 
 const MAX_ZONES = 3
 
@@ -74,7 +73,7 @@ export function WaitlistDialog({
     }
     setSubmitting(true)
     try {
-      const result = await standbyApi.create(
+      await standbyApi.create(
         {
           performanceId: toBackendPerformanceId(performance.id),
           sessionNum: session.sessionNum,
@@ -82,14 +81,6 @@ export function WaitlistDialog({
         },
         accessToken,
       )
-      standbyStore.add(String(authUser.userId), {
-        standbyId: result.standbyId,
-        performanceId: performance.id,
-        sessionId: session.id,
-        sessionNum: session.sessionNum,
-        zones: result.zones,
-        createdAt: new Date().toISOString(),
-      })
       toast.success('취소표 대기 신청이 완료되었습니다.', {
         description: '취소표가 나오면 순서대로 알려드립니다.',
       })

@@ -8,7 +8,6 @@ import { buttonVariants } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import { orderApi, OrderApiError } from '@/lib/order-api'
 import { readPendingPaymentLedger, clearPendingPaymentLedger } from '@/lib/pending-payment'
-import { standbyStore } from '@/lib/standby-store'
 import { useApp } from '@/lib/store'
 
 function PaymentSuccessInner() {
@@ -57,9 +56,6 @@ function PaymentSuccessInner() {
             createOrder(ledger)
           } catch (e) {
             console.warn('포인트 장부(mock) 갱신 실패 — 결제 자체는 완료됨:', e)
-          }
-          if (ledger.standbyCleanup) {
-            standbyStore.remove(ledger.standbyCleanup.userId, ledger.standbyCleanup.standbyId)
           }
           clearPendingPaymentLedger(paymentId)
         }

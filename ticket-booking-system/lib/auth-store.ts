@@ -1,9 +1,6 @@
 /**
  * 로그인 토큰/사용자 정보를 localStorage에 저장하는 순수 persistence 계층 (React 의존 없음).
- * lib/standby-store.ts(persistence) + lib/use-standby.ts(React hook) 분리 패턴을 그대로 따름.
- *
- * 로그인 사용자는 브라우저 탭당 항상 1명뿐이라 standby:{userId}처럼 동적 세그먼트를
- * 둘 필요 없이, lib/performance-extras.ts의 'reseat:xxx' 전역 키 컨벤션을 쓴다.
+ * lib/performance-extras.ts의 'reseat:xxx' 전역 키 컨벤션을 따른다.
  */
 
 import type { UserType } from './user-api'

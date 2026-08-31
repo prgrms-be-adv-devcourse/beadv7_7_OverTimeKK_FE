@@ -15,8 +15,6 @@ export interface PendingPaymentLedger {
   method?: string
   pointsUsed?: number
   fromWaitlist?: boolean
-  /** 대기 매칭 결제 완료 후 로컬 대기 기록(standbyStore) 정리에 필요한 정보 */
-  standbyCleanup?: { userId: string; standbyId: number }
 }
 
 function key(paymentId: number) {

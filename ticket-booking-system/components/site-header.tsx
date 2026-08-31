@@ -3,7 +3,6 @@
 import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
 import { Ticket, Bell, Coins } from 'lucide-react'
-import { api } from '@/lib/api'
 import { useApp } from '@/lib/store'
 import { formatKRW, formatDay, formatTime } from '@/lib/domain'
 import { cn } from '@/lib/utils'
@@ -30,24 +29,13 @@ const businessNav = [
 ]
 
 export function SiteHeader() {
-  const { userId, userName, points, authUser, accessToken, logoutAuth } = useApp()
+  const { userName, points, authUser, accessToken, logoutAuth } = useApp()
   const pathname = usePathname()
   const router = useRouter()
   const nav = authUser?.userType === 'BUSINESS' ? businessNav : buyerNav
 
-  const { entries } = useMyStandby(userId ?? '', accessToken ?? '')
-  const offeredEntries = authUser
-    ? entries
-        .filter((e) => e.zoneRanks.some((z) => z.isHeld))
-        .map((e) => {
-          const heldZone = e.zoneRanks.find((z) => z.isHeld)?.zone
-          const performance = api.getPerformance(e.record.performanceId)
-          const session = api
-            .listSessions(e.record.performanceId)
-            .find((s) => s.id === e.record.sessionId)
-          return { standbyId: e.record.standbyId, heldZone, performance, session }
-        })
-    : []
+  const { entries } = useMyStandby(accessToken ?? '')
+  const offeredEntries = authUser ? entries.filter((e) => e.status === 'HELD') : []
   const offeredCount = offeredEntries.length
 
   return (
@@ -108,21 +96,19 @@ export function SiteHeader() {
                     새로운 알림이 없습니다.
                   </p>
                 ) : (
-                  offeredEntries.map(({ standbyId, heldZone, performance, session }) => (
+                  offeredEntries.map((entry) => (
                     <DropdownMenuItem
-                      key={standbyId}
+                      key={entry.standbyId}
                       className="flex-col items-start gap-0.5 py-2"
                       onClick={() => router.push('/waitlist')}
                     >
                       <span className="font-medium text-foreground">
-                        {performance?.title} {heldZone}석 취소표 매칭 성공! 확인해보세요
+                        {entry.performanceTitle} {entry.matchedZone}석 취소표 매칭 성공! 확인해보세요
                       </span>
-                      {session && (
-                        <span className="text-xs text-muted-foreground">
-                          {session.sessionNum}회차 · {formatDay(session.performanceStartAt)}{' '}
-                          {formatTime(session.performanceStartAt)}
-                        </span>
-                      )}
+                      <span className="text-xs text-muted-foreground">
+                        {entry.sessionNum}회차 · {formatDay(entry.performanceStartAt)}{' '}
+                        {formatTime(entry.performanceStartAt)}
+                      </span>
                     </DropdownMenuItem>
                   ))
                 )}

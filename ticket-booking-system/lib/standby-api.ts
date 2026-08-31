@@ -12,9 +12,6 @@ import type { Zone } from './types'
 
 const BASE_URL = process.env.NEXT_PUBLIC_STANDBY_API_BASE_URL ?? 'http://localhost:8080'
 
-/** 결제 제한 시간(초). 백엔드가 만료시각을 내려주지 않아(문서 2번 항목 참고) 프론트에서 근사 계산용으로만 사용. */
-export const STANDBY_OFFER_TTL_SECONDS = 1800
-
 /**
  * mock Performance.id(예: 'p_1001')를 백엔드 숫자 performanceId로 변환.
  * 프론트 공연/회차 데이터가 아직 mock이라 실제 backend ID와 일치를 보장할 수 없다 —
@@ -123,6 +120,24 @@ export interface StandbyDetail {
   zoneRanks: StandbyZoneRank[]
 }
 
+export type StandbyStatus = 'WAITING' | 'HELD' | 'RESERVED' | 'CANCELLED'
+
+/** GET /api/standby 응답 항목 — 공연명/회차시각/매칭구역/결제만료시각까지 서버가 조인해서 내려준다. */
+export interface StandbyListItem {
+  standbyId: number
+  performanceId: number
+  sessionNum: number
+  performanceTitle: string
+  performanceStartAt: string
+  zones: Zone[]
+  matchedZone: Zone | null
+  ticketId: number | null
+  status: StandbyStatus
+  reservedAt: string
+  /** HELD 상태일 때의 결제 제한(만료) 시각. WAITING이면 null. */
+  expiredAt: string | null
+}
+
 export const standbyApi = {
   // POST /api/standby — 신청자는 accessToken에서 서버가 식별한다
   async create(input: CreateStandbyInput, accessToken: string): Promise<CreateStandbyResult> {
@@ -133,6 +148,15 @@ export const standbyApi = {
     })
     if (!data) throw new StandbyApiError('대기 신청 응답이 비어있습니다.', null, 500)
     return data
+  },
+
+  // GET /api/standby — 내 대기 신청 전체 목록(공연/회차/매칭 정보 포함)
+  async list(accessToken: string): Promise<StandbyListItem[]> {
+    const data = await request<StandbyListItem[]>('/api/standby', {
+      method: 'GET',
+      accessToken,
+    })
+    return data ?? []
   },
 
   // GET /api/standby/{standbyId} (Authorization: Bearer)
