@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState, type ChangeEvent } from 'react'
 import Link from 'next/link'
-import { Plus, Trash2, Users, Minus } from 'lucide-react'
+import { Plus, Users, Minus } from 'lucide-react'
 import { useApp } from '@/lib/store'
 import { api } from '@/lib/api'
 import { effectivePerformanceStatus } from '@/lib/domain'
@@ -56,8 +56,6 @@ export default function SellerPage() {
     userId,
     version,
     refresh,
-    sellerCancelPerformance,
-    deletePerformance,
     authUser,
     accessToken,
     authLoading,
@@ -66,8 +64,6 @@ export default function SellerPage() {
   const [submitting, setSubmitting] = useState(false)
   const [isUploadingPoster, setIsUploadingPoster] = useState(false)
   const [posterUploadError, setPosterUploadError] = useState<string | null>(null)
-  /** 수정/삭제 버튼이 실 API 호출 중인 공연 id — 중복 클릭 방지용 */
-  const [actionPendingId, setActionPendingId] = useState<string | null>(null)
 
   const [venues, setVenues] = useState<VenueSummary[]>([])
   const [halls, setHalls] = useState<HallSummary[]>([])
@@ -317,25 +313,6 @@ export default function SellerPage() {
       alert(message)
     } finally {
       setSubmitting(false)
-    }
-  }
-
-  async function handleDeletePerformance(performance: (typeof performances)[number]) {
-    if (!authUser || !accessToken) {
-      alert('로그인이 필요합니다.')
-      return
-    }
-    if (!confirm(`"${performance.title}"을(를) 삭제하시겠습니까?`)) return
-    setActionPendingId(performance.id)
-    try {
-      await performanceApi.delete(Number(performance.id), accessToken)
-      deletePerformance(performance.id)
-      loadSellerPerformances()
-    } catch (e) {
-      const message = e instanceof PerformanceApiError ? e.message : '공연 삭제에 실패했습니다.'
-      alert(message)
-    } finally {
-      setActionPendingId(null)
     }
   }
 
@@ -600,19 +577,6 @@ export default function SellerPage() {
                 <Button  size="sm" variant="outline">
                   <Link href={`/performances/${performance.id}`}>상세 보기</Link>
                 </Button>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  disabled={actionPendingId === performance.id}
-                  onClick={() => handleDeletePerformance(performance)}
-                >
-                  <Trash2 className="mr-1 size-3.5" />삭제
-                </Button>
-                {performance.status !== 'CANCELLED' && (
-                  <Button size="sm" variant="destructive" onClick={() => sellerCancelPerformance(performance.id)}>
-                    공연 취소
-                  </Button>
-                )}
               </div>
             </div>
           )

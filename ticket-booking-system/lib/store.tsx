@@ -9,11 +9,13 @@ import {
   useState,
   type ReactNode,
 } from 'react'
+import { toast } from 'sonner'
 import { api } from './api'
 import { performanceApi } from './performance-api'
 import { orderApi } from './order-api'
 import { userApi, UserApiError, type SignUpBusinessInput, type SignUpIndividualInput } from './user-api'
 import { readAuth, writeAuth, clearAuth, type StoredAuth, type StoredAuthUser } from './auth-store'
+import { refreshAccessTokenOnce, AUTH_REFRESHED_EVENT, AUTH_EXPIRED_EVENT } from './auth-refresh'
 import type { Zone } from './types'
 
 /** 좌석 선택 중 임시로 점유된 좌석. 새로고침 시 초기화되고, 페이지 이동만으로는 유지된다. */
@@ -113,28 +115,37 @@ export function AppProvider({ children }: { children: ReactNode }) {
           if (!cancelled) setAuth(stored)
           return
         }
-        try {
-          const tokens = await userApi.refresh(stored.refreshToken)
-          const me = await userApi.getMe(tokens.accessToken)
-          const nextAuth: StoredAuth = {
-            accessToken: tokens.accessToken,
-            refreshToken: tokens.refreshToken,
-            user: { userId: me.userId, username: me.username, userType: me.userType },
-          }
-          if (!cancelled) {
-            writeAuth(nextAuth)
-            setAuth(nextAuth)
-          }
-        } catch {
-          clearAuth()
-          if (!cancelled) setAuth(null)
-        }
+        // lib/auth-refresh.ts의 공용 갱신 로직을 그대로 재사용한다(성공/실패 시
+        // AUTH_REFRESHED_EVENT/AUTH_EXPIRED_EVENT도 함께 쐈다가 아래 리스너 effect가 반영함) —
+        // 여기서도 반환값으로 즉시 반영해서 첫 렌더부터 최신 상태가 보이게 한다.
+        const refreshed = await refreshAccessTokenOnce()
+        if (!cancelled) setAuth(refreshed)
       } finally {
         if (!cancelled) setAuthLoading(false)
       }
     })()
     return () => {
       cancelled = true
+    }
+  }, [])
+
+  // 세션 중간에 어떤 API 호출이든 401을 받아 백그라운드에서 토큰이 갱신/만료되면
+  // (lib/auth-refresh.ts의 withAuthRetry) 이 컴포넌트의 auth 상태도 그에 맞춰 동기화한다.
+  // 이게 없으면 헤더 등은 계속 "로그인됨"으로 보이는데 실제 accessToken은 낡은 채로 남는다.
+  useEffect(() => {
+    function handleRefreshed(event: Event) {
+      const detail = (event as CustomEvent<StoredAuth>).detail
+      if (detail) setAuth(detail)
+    }
+    function handleExpired() {
+      setAuth(null)
+      toast.error('세션이 만료되어 로그아웃되었습니다.', { description: '다시 로그인해 주세요.' })
+    }
+    window.addEventListener(AUTH_REFRESHED_EVENT, handleRefreshed)
+    window.addEventListener(AUTH_EXPIRED_EVENT, handleExpired)
+    return () => {
+      window.removeEventListener(AUTH_REFRESHED_EVENT, handleRefreshed)
+      window.removeEventListener(AUTH_EXPIRED_EVENT, handleExpired)
     }
   }, [])
 

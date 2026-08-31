@@ -19,6 +19,8 @@
  *   버그가 있다(2026-07-28 직접 검증).
  */
 
+import { withAuthRetry } from './auth-refresh'
+
 const BASE_URL = process.env.NEXT_PUBLIC_ORDER_API_BASE_URL ?? 'http://localhost:8080'
 
 interface ApiResponse<T> {
@@ -55,7 +57,7 @@ function getOrCreateIdempotencyKey(scope: 'pay' | 'confirm', id: number): string
   return key
 }
 
-async function request<T>(path: string, init?: RequestInit & { accessToken?: string }): Promise<T> {
+async function requestOnce<T>(path: string, init?: RequestInit & { accessToken?: string }): Promise<T> {
   const { accessToken, headers, ...rest } = init ?? {}
   const res = await fetch(`${BASE_URL}${path}`, {
     ...rest,
@@ -73,6 +75,15 @@ async function request<T>(path: string, init?: RequestInit & { accessToken?: str
     throw new OrderApiError(body.message ?? '요청이 실패했습니다.', body.code, res.status)
   }
   return body.data as T
+}
+
+// accessToken이 만료돼 401을 받으면 자동으로 한 번 갱신 후 재시도한다(lib/auth-refresh.ts 참고).
+async function request<T>(path: string, init?: RequestInit & { accessToken?: string }): Promise<T> {
+  return withAuthRetry(
+    init?.accessToken,
+    (error) => error instanceof OrderApiError && error.status === 401,
+    (accessToken) => requestOnce<T>(path, { ...init, accessToken }),
+  )
 }
 
 export interface CreateOrderResult {

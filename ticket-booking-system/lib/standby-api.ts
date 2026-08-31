@@ -9,6 +9,7 @@
  */
 
 import type { Zone } from './types'
+import { withAuthRetry } from './auth-refresh'
 
 const BASE_URL = process.env.NEXT_PUBLIC_STANDBY_API_BASE_URL ?? 'http://localhost:8080'
 
@@ -58,7 +59,7 @@ export function standbyErrorMessage(error: unknown, fallback: string): string {
   return fallback
 }
 
-async function request<T>(
+async function requestOnce<T>(
   path: string,
   init: RequestInit & { accessToken?: string } = {},
 ): Promise<T | null> {
@@ -93,6 +94,18 @@ async function request<T>(
     throw new StandbyApiError(body?.message ?? '요청에 실패했습니다.', body?.code ?? null, res.status)
   }
   return body.data
+}
+
+// accessToken이 만료돼 401을 받으면 자동으로 한 번 갱신 후 재시도한다(lib/auth-refresh.ts 참고).
+async function request<T>(
+  path: string,
+  init: RequestInit & { accessToken?: string } = {},
+): Promise<T | null> {
+  return withAuthRetry(
+    init.accessToken,
+    (error) => error instanceof StandbyApiError && error.status === 401,
+    (accessToken) => requestOnce<T>(path, { ...init, accessToken }),
+  )
 }
 
 export interface CreateStandbyInput {

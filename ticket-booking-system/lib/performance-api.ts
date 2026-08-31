@@ -14,6 +14,8 @@
  * /api/performances/detail 계열을 쓴다(요청 필드가 더 적어서 그대로 유지).
  */
 
+import { withAuthRetry } from './auth-refresh'
+
 export const BASE_URL = process.env.NEXT_PUBLIC_PERFORMANCE_API_BASE_URL ?? 'http://localhost:8080'
 
 export interface RealPerformance {
@@ -107,7 +109,7 @@ export class PerformanceApiError extends Error {
   }
 }
 
-async function request<T>(path: string, init?: RequestInit & { accessToken?: string }): Promise<T> {
+async function requestOnce<T>(path: string, init?: RequestInit & { accessToken?: string }): Promise<T> {
   const { accessToken, headers, ...rest } = init ?? {}
   const res = await fetch(`${BASE_URL}${path}`, {
     ...rest,
@@ -126,6 +128,15 @@ async function request<T>(path: string, init?: RequestInit & { accessToken?: str
     throw new PerformanceApiError(body.message ?? '요청이 실패했습니다.', body.code, res.status)
   }
   return body.data as T
+}
+
+// accessToken이 만료돼 401을 받으면 자동으로 한 번 갱신 후 재시도한다(lib/auth-refresh.ts 참고).
+async function request<T>(path: string, init?: RequestInit & { accessToken?: string }): Promise<T> {
+  return withAuthRetry(
+    init?.accessToken,
+    (error) => error instanceof PerformanceApiError && error.status === 401,
+    (accessToken) => requestOnce<T>(path, { ...init, accessToken }),
+  )
 }
 
 export interface RegisterPerformanceInput {
